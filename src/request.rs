@@ -1,7 +1,8 @@
 use std::any::Any;
 use bytes::Bytes;
-use http::{HeaderName, HeaderValue, Method, Uri, Version};
+use http::{HeaderName, HeaderValue, Method, Request, Uri, Version};
 use http::request::Builder;
+use http::header::HOST;
 use monoio_http::common::body::{FixedBody, HttpBody};
 
 use super::client::client::MonoioClient;
@@ -60,37 +61,38 @@ impl HttpRequest {
         self
     }
 
-    pub async fn send(self) -> Result<HttpResponse, Error> {
-        let http_request = self
-            .builder
-            .body(HttpBody::fixed_body(None))
+    fn build_http_request(builder: Builder, body: Option<Bytes>) -> Result<(Request<HttpBody>, Uri), Error> {
+        let mut http_request = builder
+            .body(HttpBody::fixed_body(body))
             .map_err(|e| Error::HttpRequestBuilder(e))?;
-        let uri = http_request.uri().clone();
 
+        let uri = http_request.uri().clone();
+        if let Some(host) = uri.host() {
+            let host = HeaderValue::try_from(host).map_err(|e| Error::InvalidHeaderValue(e))?;
+            let headers = http_request.headers_mut();
+            if !headers.contains_key(HOST) {
+                headers.insert(HOST, host);
+            }
+        }
+
+        Ok((http_request, uri))
+    }
+
+    pub async fn send(self) -> Result<HttpResponse, Error> {
+        let (req, uri) = HttpRequest::build_http_request(self.builder, None)?;
         let http_response = self
             .client
-            .send_request(http_request, uri)
-            .await
-            .map_err(|e| {
-                Error::HttpResponseError(e)
-            })?;
+            .send_request(req, uri)
+            .await?;
         Ok(HttpResponse::new(http_response))
     }
 
     pub async fn send_body<T>(self, body: Bytes) -> Result<HttpResponse, Error> {
-        let http_request = self
-            .builder
-            .body(HttpBody::fixed_body(Some(body)))
-            .map_err(|e| Error::HttpRequestBuilder(e))?;
-        let uri = http_request.uri().clone();
-
+        let (req, uri) = HttpRequest::build_http_request(self.builder, Some(body))?;
         let http_response = self
             .client
-            .send_request(http_request, uri)
-            .await
-            .map_err(|e| {
-                Error::HttpResponseError(e)
-            })?;
+            .send_request(req, uri)
+            .await?;
         Ok(HttpResponse::new(http_response))
     }
 }

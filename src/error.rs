@@ -1,27 +1,26 @@
-use monoio_http::common::error::HttpError;
+use monoio_http::common::error::HttpError as MonoioHttpError;
+use http::Error as HttpError;
+use http::header::InvalidHeaderValue;
+use serde_json::Error as SerdeError;
+use monoio_transports::{FromUriError, TransportError};
 use thiserror::Error as ThisError;
 
-pub type Result<T> = std::result::Result<T, HttpError>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(ThisError, Debug)]
 pub enum Error {
+    #[error("{0:?}")]
+    InvalidHeaderValue(InvalidHeaderValue),
     #[error("error building http request: {0:?}")]
-    HttpRequestBuilder(http::Error),
+    HttpRequestBuilder(HttpError),
+    #[error("error getting pool key from uri: {0:?}")]
+    UriKeyError(FromUriError),
+    #[error("transport error requesting a connection: {0:?}")]
+    HttpTransportError(TransportError),
     #[error("{0:?}")]
-    HttpResponseError(HttpError),
+    HttpResponseError(MonoioHttpError),
     #[error("{0:?}")]
-    ByteDecodeError(HttpError),
+    ByteDecodeError(MonoioHttpError),
     #[error("serde body deserialize error: {0:?}")]
-    SerdeDeserializeError(serde_json::Error),
+    SerdeDeserializeError(SerdeError),
 }
-
-// impl std::fmt::Display for Error {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         match self {
-//             Error::HttpRequestBuilder(e) => write!(f, "error building http request: {}", e),
-//             Error::HttpResponseError(e) => write!(f, "error processing http response: {}", e),
-//             Error::ByteDecodeError(e) => write!(f, "error converting response body to bytes: {}", e),
-//             Error::SerdeDeserializeError(e) => write!(f, "error during serde deserializing: {}", e),
-//         }
-//     }
-// }

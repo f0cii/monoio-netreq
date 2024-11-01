@@ -5,9 +5,9 @@ use monoio_http::common::body::HttpBody;
 use monoio_transports::http::{HttpConnector};
 use monoio_transports::connectors::{Connector, TcpConnector, TcpTlsAddr, TlsConnector, TlsStream};
 
-use crate::client::Proto;
+use super::Proto;
 use crate::response::{Response};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::request::HttpRequest;
 
 pub struct MonoioClient {
@@ -36,7 +36,7 @@ impl MonoioClient {
 }
 
 #[derive(Default)]
-pub struct ClientBuilder {
+struct ClientBuilder {
     build_config: Config
 }
 
@@ -75,7 +75,7 @@ impl ClientBuilder {
             Proto::Http2 => vec!["h2"],
             Proto::Auto => vec!["http/1.1", "h2"]
         };
-        // Setting ALPN Protocol here takes care of choosing the right Proto(h1/h2) for HttpConnector
+
         let tls_connector = TlsConnector::new_with_tls_default(connector, Some(alpn));
         let http_connector = HttpConnector::new(tls_connector);
 
@@ -104,10 +104,14 @@ impl MonoioClient {
     }
 
     pub(crate) async fn send_request(&self, req: Request<HttpBody>, uri: Uri) -> Result<Response<HttpBody>> {
-        // TODO: Remove the unwraps
-        let key = uri.try_into().unwrap();
-        let mut conn = self.inner.http_connector.connect(key).await.unwrap();
-        let (response, _) = conn.send_request(req).await;
-        response
+        let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
+        let mut conn = self
+            .inner
+            .http_connector
+            .connect(key)
+            .await
+            .map_err(|e| Error::HttpTransportError(e))?;
+
+        conn.send_request(req).await.0.map_err(|e| Error::HttpResponseError(e))
     }
 }

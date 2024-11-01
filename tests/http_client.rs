@@ -1,4 +1,4 @@
-// use std::collections::HashMap;
+use std::collections::HashMap;
 use monoio_netreq::client::client::MonoioClient;
 
 
@@ -15,8 +15,9 @@ async fn build_a_client() {
         .await;
 
     assert_eq!(false, http_result.is_err());
-    
+
     let res = http_result.unwrap();
     assert_eq!(200, res.status());
-    // TODO: Investigate why http1 client throws https status 400 always
+    let json_response = res.json::<HashMap<String, String>>().await;
+    println!("Http Response: {:?}", json_response);
 }
