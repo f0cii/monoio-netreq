@@ -48,7 +48,7 @@ impl HttpRequest {
         self
     }
 
-    pub fn set_version<T>(mut self, version: Version) -> Self {
+    pub fn set_version(mut self, version: Version) -> Self {
         self.builder = self.builder.version(version);
         self
     }
@@ -87,7 +87,7 @@ impl HttpRequest {
         Ok(HttpResponse::new(http_response))
     }
 
-    pub async fn send_body<T>(self, body: Bytes) -> Result<HttpResponse, Error> {
+    pub async fn send_body(self, body: Bytes) -> Result<HttpResponse, Error> {
         let (req, uri) = HttpRequest::build_http_request(self.builder, Some(body))?;
         let http_response = self
             .client

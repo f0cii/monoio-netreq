@@ -36,7 +36,7 @@ impl MonoioClient {
 }
 
 #[derive(Default)]
-struct ClientBuilder {
+pub struct ClientBuilder {
     build_config: Config
 }
 
