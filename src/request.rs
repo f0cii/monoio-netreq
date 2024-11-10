@@ -67,11 +67,13 @@ impl HttpRequest {
             .map_err(|e| Error::HttpRequestBuilder(e))?;
 
         let uri = http_request.uri().clone();
-        if let Some(host) = uri.host() {
-            let host = HeaderValue::try_from(host).map_err(|e| Error::InvalidHeaderValue(e))?;
-            let headers = http_request.headers_mut();
-            if !headers.contains_key(HOST) {
-                headers.insert(HOST, host);
+        if http_request.version() != Version::HTTP_2 {
+            if let Some(host) = uri.host() {
+                let host = HeaderValue::try_from(host).map_err(|e| Error::InvalidHeaderValue(e))?;
+                let headers = http_request.headers_mut();
+                if !headers.contains_key(HOST) {
+                    headers.insert(HOST, host);
+                }
             }
         }
 

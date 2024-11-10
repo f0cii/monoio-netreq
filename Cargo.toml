@@ -7,8 +7,7 @@ edition = "2021"
 
 [dependencies]
 monoio = { version = "0.2.4", features = ["poll-io", "sync"] }
-#monoio-transports = { version = "0.5.2", features = ["native-tls"] }
-monoio-transports = { path = "../monoio-transports", features = ["native-tls"] }
+monoio-transports = "0.5.3"
 monoio-http = "0.3.11"
 http = "1.1.0"
 thiserror = "1.0.65"

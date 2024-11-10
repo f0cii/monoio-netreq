@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::time::Duration;
 use http::{Request, Uri};
 use monoio::net::TcpStream;
 use monoio_http::common::body::HttpBody;
@@ -14,30 +15,35 @@ pub struct MonoioClient {
     inner: Rc<ClientInner>,
 }
 
-struct ClientInner {
-    config: Config,
-    connector: TcpConnector,
-    http_connector: HttpConnector<TlsConnector<TcpConnector>, TcpTlsAddr, TlsStream<TcpStream>>,
-}
-
-#[derive(Default, Clone)]
-struct Config {
-    proto: Proto,
-    pool_disabled: bool,
-    max_idle_connections: usize,
-    idle_timeout_duration: u64,
-}
-
-
 impl MonoioClient {
     pub fn builder() -> ClientBuilder {
         ClientBuilder::default()
     }
 }
 
+
+struct ClientInner {
+    config: ClientConfig,
+    connector: TcpConnector,
+    http_connector: HttpConnector<TlsConnector<TcpConnector>, TcpTlsAddr, TlsStream<TcpStream>>,
+}
+
+
+#[derive(Default, Clone)]
+struct ClientConfig {
+    proto: Proto,
+    pool_disabled: bool,
+    max_idle_connections: usize,
+    idle_timeout_duration: u32,
+    read_timeout: Option<Duration>,
+    initial_max_streams: Option<usize>,
+    max_concurrent_streams: Option<u32>,
+}
+
+
 #[derive(Default)]
 pub struct ClientBuilder {
-    build_config: Config
+    build_config: ClientConfig
 }
 
 impl ClientBuilder {
@@ -51,8 +57,23 @@ impl ClientBuilder {
         self
     }
 
-    pub fn idle_connection_timeout_duration(mut self, val: u64) -> Self {
+    pub fn idle_connection_timeout_duration(mut self, val: u32) -> Self {
         self.build_config.idle_timeout_duration = val;
+        self
+    }
+
+    pub fn set_read_timeout(mut self, val: u64) -> Self {
+        self.build_config.read_timeout = Some(Duration::from_secs(val));
+        self
+    }
+
+    pub fn initial_max_streams(mut self, val: usize) -> Self {
+        self.build_config.initial_max_streams = Some(val);
+        self
+    }
+
+    pub fn max_concurrent_streams(mut self, val: u32) -> Self {
+        self.build_config.max_concurrent_streams = Some(val);
         self
     }
 
@@ -77,7 +98,25 @@ impl ClientBuilder {
         };
 
         let tls_connector = TlsConnector::new_with_tls_default(connector, Some(alpn));
-        let http_connector = HttpConnector::new(tls_connector);
+        let mut http_connector = HttpConnector::new(tls_connector);
+
+        if config.proto == Proto::Http1 {
+            http_connector.set_http1_only();
+        }
+
+        if config.proto == Proto::Http2 {
+            http_connector.set_http2_only();
+        }
+
+        if let Some(val) = config.initial_max_streams {
+            http_connector.h2_builder().initial_max_send_streams(val);
+        }
+
+        if let Some(val) = config.max_concurrent_streams {
+            http_connector.h2_builder().max_concurrent_streams(val);
+        }
+
+        http_connector.set_read_timeout(config.read_timeout);
 
         let inner = Rc::new(ClientInner {
             config: self.build_config.clone(),
@@ -112,6 +151,7 @@ impl MonoioClient {
             .await
             .map_err(|e| Error::HttpTransportError(e))?;
 
-        conn.send_request(req).await.0.map_err(|e| Error::HttpResponseError(e))
+        let (res, _) = conn.send_request(req).await;
+        res.map_err(|e| Error::HttpResponseError(e))
     }
 }
