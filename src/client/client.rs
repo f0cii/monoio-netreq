@@ -1,6 +1,6 @@
 use std::rc::Rc;
 use std::time::Duration;
-use http::{Request, Uri};
+use http::{Request, Uri, Version};
 use monoio::net::TcpStream;
 use monoio_http::common::body::HttpBody;
 use monoio_transports::http::{HttpConnector};
@@ -24,7 +24,7 @@ impl MonoioClient {
 
 struct ClientInner {
     config: ClientConfig,
-    connector: TcpConnector,
+    _connector: TcpConnector,
     http_connector: HttpConnector<TlsConnector<TcpConnector>, TcpTlsAddr, TlsStream<TcpStream>>,
 }
 
@@ -100,14 +100,6 @@ impl ClientBuilder {
         let tls_connector = TlsConnector::new_with_tls_default(connector, Some(alpn));
         let mut http_connector = HttpConnector::new(tls_connector);
 
-        if config.proto == Proto::Http1 {
-            http_connector.set_http1_only();
-        }
-
-        if config.proto == Proto::Http2 {
-            http_connector.set_http2_only();
-        }
-
         if let Some(val) = config.initial_max_streams {
             http_connector.h2_builder().initial_max_send_streams(val);
         }
@@ -120,7 +112,7 @@ impl ClientBuilder {
 
         let inner = Rc::new(ClientInner {
             config: self.build_config.clone(),
-            connector,
+            _connector: connector,
             http_connector
         });
 
@@ -142,7 +134,22 @@ impl MonoioClient {
         HttpRequest::new(self.clone())
     }
 
+    fn verify_request_and_client_protocols(client_protocol: &Proto, req: &Request<HttpBody>) -> Result<()> {
+        // h2 supports few http/1.1 methods, but still making it redundant
+        if (client_protocol.eq(&Proto::Http1) && req.version().eq(&Version::HTTP_2)) ||
+            (client_protocol.eq(&Proto::Http2) && req.version().eq(&Version::HTTP_11))
+        {
+            return Err(Error::HttpVersionMismatch(
+                format!("request version: {:?}, client alpn: {:?}", req.version(), client_protocol)
+            ))
+        };
+
+        Ok(())
+    }
+
     pub(crate) async fn send_request(&self, req: Request<HttpBody>, uri: Uri) -> Result<Response<HttpBody>> {
+        Self::verify_request_and_client_protocols(&self.inner.config.proto, &req)?;
+
         let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
         let mut conn = self
             .inner

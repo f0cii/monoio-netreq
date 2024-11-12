@@ -13,6 +13,8 @@ pub enum Error {
     InvalidHeaderValue(InvalidHeaderValue),
     #[error("error building http request: {0:?}")]
     HttpRequestBuilder(HttpError),
+    #[error("http request version and client alpn does not match: {0:?}")]
+    HttpVersionMismatch(String),
     #[error("error getting pool key from uri: {0:?}")]
     UriKeyError(FromUriError),
     #[error("transport error requesting a connection: {0:?}")]

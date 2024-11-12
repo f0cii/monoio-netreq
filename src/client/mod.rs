@@ -1,6 +1,6 @@
 pub mod client;
 
-#[derive(Default, Clone, PartialEq)]
+#[derive(Default, Clone, PartialEq, Debug)]
 enum Proto {
     Http1,
     Http2,
