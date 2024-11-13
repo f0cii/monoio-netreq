@@ -4,8 +4,14 @@ use http::{Request, Uri, Version};
 use monoio::net::TcpStream;
 use monoio_http::common::body::HttpBody;
 use monoio_transports::http::{HttpConnector};
-use monoio_transports::connectors::{Connector, TcpConnector, TcpTlsAddr, TlsConnector, TlsStream};
+use monoio_transports::connectors::{Connector, TcpConnector};
+#[cfg(feature = "https")]
+use monoio_transports::connectors::TlsConnector;
+#[cfg(feature = "https")]
+use monoio_transports::connectors::{TlsStream, TcpTlsAddr as Key};
 
+#[cfg(not(feature = "https"))]
+use super::key::TcpAddr as Key;
 use super::Proto;
 use crate::response::{Response};
 use crate::error::{Error, Result};
@@ -24,8 +30,10 @@ impl MonoioClient {
 
 struct ClientInner {
     config: ClientConfig,
-    _connector: TcpConnector,
-    http_connector: HttpConnector<TlsConnector<TcpConnector>, TcpTlsAddr, TlsStream<TcpStream>>,
+    #[cfg(not(feature = "https"))]
+    http_connector: HttpConnector<TcpConnector, Key, TcpStream>,
+    #[cfg(feature = "https")]
+    http_connector: HttpConnector<TlsConnector<TcpConnector>, Key, TlsStream<TcpStream>>,
 }
 
 
@@ -89,16 +97,33 @@ impl ClientBuilder {
 
     pub fn build(self) -> MonoioClient {
         let config = self.build_config.clone();
+        let tcp_connector = TcpConnector::default();
 
-        let connector = TcpConnector::default();
+        #[cfg(not(feature = "https"))]
+        let mut http_connector = HttpConnector::new(tcp_connector);
+        #[cfg(not(feature = "https"))]
+        if config.proto == Proto::Http1 {
+            http_connector.set_http1_only();
+        }
+        #[cfg(not(feature = "https"))]
+        if config.proto == Proto::Http2 {
+            http_connector.set_http2_only();
+        }
+
+        #[cfg(feature = "https")]
         let alpn = match config.proto {
             Proto::Http1 => vec!["http/1.1"],
             Proto::Http2 => vec!["h2"],
             Proto::Auto => vec!["http/1.1", "h2"]
         };
-
-        let tls_connector = TlsConnector::new_with_tls_default(connector, Some(alpn));
+        #[cfg(feature = "https")]
+        let tls_connector = TlsConnector::new_with_tls_default(tcp_connector, Some(alpn));
+        #[cfg(feature = "https")]
         let mut http_connector = HttpConnector::new(tls_connector);
+
+        if let Some(val) = config.initial_max_streams {
+            http_connector.h2_builder().initial_max_send_streams(val);
+        }
 
         if let Some(val) = config.initial_max_streams {
             http_connector.h2_builder().initial_max_send_streams(val);
@@ -112,7 +137,6 @@ impl ClientBuilder {
 
         let inner = Rc::new(ClientInner {
             config: self.build_config.clone(),
-            _connector: connector,
             http_connector
         });
 
@@ -150,6 +174,9 @@ impl MonoioClient {
     pub(crate) async fn send_request(&self, req: Request<HttpBody>, uri: Uri) -> Result<Response<HttpBody>> {
         Self::verify_request_and_client_protocols(&self.inner.config.proto, &req)?;
 
+        #[cfg(feature = "https")]
+        let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
+        #[cfg(not(feature = "https"))]
         let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
         let mut conn = self
             .inner

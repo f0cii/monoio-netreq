@@ -5,7 +5,7 @@ use http::request::Builder;
 use http::header::HOST;
 use monoio_http::common::body::{FixedBody, HttpBody};
 
-use super::client::client::MonoioClient;
+use super::client::http_conn::MonoioClient;
 use super::error::Error;
 use super::response::HttpResponse;
 

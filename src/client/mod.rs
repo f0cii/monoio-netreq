@@ -1,4 +1,5 @@
-pub mod client;
+pub mod http_conn;
+mod key;
 
 #[derive(Default, Clone, PartialEq, Debug)]
 enum Proto {
