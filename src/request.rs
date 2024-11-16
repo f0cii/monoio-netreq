@@ -2,12 +2,20 @@ use std::any::Any;
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue, Method, Request, Uri, Version};
 use http::request::Builder;
-use http::header::HOST;
+use http::header::{CONNECTION, HOST, TE, TRANSFER_ENCODING, UPGRADE};
 use monoio_http::common::body::{FixedBody, HttpBody};
 
 use super::client::http_conn::MonoioClient;
 use super::error::Error;
 use super::response::HttpResponse;
+
+const PROHIBITED_HEADERS: [HeaderName; 5] = [
+    CONNECTION,
+    HeaderName::from_static("keep-alive"),
+    TE,
+    TRANSFER_ENCODING,
+    UPGRADE
+];
 
 pub struct HttpRequest {
     client: MonoioClient,
@@ -67,12 +75,20 @@ impl HttpRequest {
             .map_err(|e| Error::HttpRequestBuilder(e))?;
 
         let uri = http_request.uri().clone();
-        if http_request.version() != Version::HTTP_2 {
-            if let Some(host) = uri.host() {
-                let host = HeaderValue::try_from(host).map_err(|e| Error::InvalidHeaderValue(e))?;
+        match http_request.version() {
+            Version::HTTP_2 | Version::HTTP_3 => {
                 let headers = http_request.headers_mut();
-                if !headers.contains_key(HOST) {
-                    headers.insert(HOST, host);
+                for header in PROHIBITED_HEADERS.iter() {
+                    headers.remove(header);
+                }
+            },
+            _ => {
+                if let Some(host) = uri.host() {
+                    let host = HeaderValue::try_from(host).map_err(|e| Error::InvalidHeaderValue(e))?;
+                    let headers = http_request.headers_mut();
+                    if !headers.contains_key(HOST) {
+                        headers.insert(HOST, host);
+                    }
                 }
             }
         }

@@ -7,10 +7,12 @@ mod test {
     #[allow(dead_code)]
     const BODY: &str = r#"{"data": {"name": "FNS"}}"#;
 
-    #[cfg(feature = "https")]
     #[monoio::test(driver = "legacy")]
-    async fn http1_tls_client_without_payload() -> anyhow::Result<()> {
-        let client = MonoioClient::builder().build_http1().build();
+    async fn http1_tls_client() -> anyhow::Result<()> {
+        let client = MonoioClient::builder()
+            .enable_https()
+            .http1_only()
+            .build();
         let http_result = client
             .make_request()
             .set_method(Method::GET)
@@ -27,52 +29,12 @@ mod test {
         Ok(())
     }
 
-    #[cfg(feature = "https")]
     #[monoio::test(driver = "legacy")]
-    async fn http1_tls_client_with_payload() -> anyhow::Result<()> {
-        let client = MonoioClient::builder().build_http1().build();
-        let url = "https://httpbin.org/post";
-        let body = Bytes::from_static(BODY.as_ref());
-        let http_result = client
-            .make_request()
-            .set_method(Method::POST)
-            .set_uri(url)
-            .set_header("Content-type", "application/json")
-            .set_version(Version::HTTP_11)
-            .send_body(body.clone())
-            .await?;
-
-        let res = http_result;
-        assert_eq!(res.status(), 200);
-        assert_eq!(res.version(), Version::HTTP_11);
-
-        Ok(())
-    }
-
-    #[cfg(feature = "https")]
-    #[monoio::test(driver = "legacy")]
-    async fn http2_tls_client_without_payload() -> anyhow::Result<()> {
-        let client = MonoioClient::builder().build_http2().build();
-        let http_result = client
-            .make_request()
-            .set_method(Method::GET)
-            .set_uri("https://httpbin.org/ip")
-            .set_header("Content-Type", "application/json")
-            .set_version(Version::HTTP_2)
-            .send()
-            .await?;
-
-        let res = http_result;
-        assert_eq!(res.status(), 200);
-        assert_eq!(res.version(), Version::HTTP_2);
-
-        Ok(())
-    }
-
-    #[cfg(feature = "https")]
-    #[monoio::test(driver = "legacy")]
-    async fn http2_tls_client_with_payload() -> anyhow::Result<()> {
-        let client = MonoioClient::builder().build_http2().build();
+    async fn http2_tls_client() -> anyhow::Result<()> {
+        let client = MonoioClient::builder()
+            .enable_https()
+            .http2_prior_knowledge()
+            .build();
         let url = "https://httpbin.org/post";
         let body = Bytes::from_static(BODY.as_ref());
         let http_result = client
@@ -91,14 +53,36 @@ mod test {
         Ok(())
     }
 
-    #[cfg(not(feature = "https"))]
     #[monoio::test(driver = "legacy")]
-    async fn http1_non_tls_client() -> anyhow::Result<()> {
-        let client = MonoioClient::builder().build_http1().build();
+    // This client sets the Protocol as Auto
+    async fn alpn_auto_tls_client() -> anyhow::Result<()> {
+        let client = MonoioClient::builder()
+            .enable_https()
+            .build();
         let http_result = client
             .make_request()
             .set_method(Method::GET)
-            .set_uri("http://httpbin.org/ip")
+            .set_uri("https://httpbin.org/ip")
+            .set_header("Content-Type", "application/json")
+            .send()
+            .await?;
+
+        let res = http_result;
+        assert_eq!(res.status(), 200);
+        assert_eq!(res.version(), Version::HTTP_2);
+
+        Ok(())
+    }
+
+    #[monoio::test(driver = "legacy")]
+    async fn http1_non_tls_client() -> anyhow::Result<()> {
+        let client = MonoioClient::builder()
+            .http1_only()
+            .build();
+        let http_result = client
+            .make_request()
+            .set_method(Method::GET)
+            .set_uri("http://nghttp2.org/httpbin/ip")
             .set_header("Content-Type", "application/json")
             .set_version(Version::HTTP_11)
             .send()
@@ -111,17 +95,19 @@ mod test {
         Ok(())
     }
 
-    #[cfg(not(feature = "https"))]
     #[monoio::test(driver = "legacy")]
     async fn http2_non_tls_client() -> anyhow::Result<()> {
-        let client = MonoioClient::builder().build_http2().build();
+        let client = MonoioClient::builder()
+            .http2_prior_knowledge()
+            .build();
+        let body = Bytes::from_static(BODY.as_ref());
         let http_result = client
             .make_request()
-            .set_method(Method::GET)
-            .set_uri("http://httpbin.org/ip")
+            .set_method(Method::POST)
+            .set_uri("http://nghttp2.org/httpbin/post")
             .set_header("Content-Type", "application/json")
             .set_version(Version::HTTP_2)
-            .send()
+            .send_body(body)
             .await?;
 
         let res = http_result;

@@ -1,18 +1,14 @@
 use std::rc::Rc;
 use std::time::Duration;
-use http::{Request, Uri, Version};
+use http::{HeaderMap, Request, Uri};
 use monoio::net::TcpStream;
 use monoio_http::common::body::HttpBody;
 use monoio_transports::http::{HttpConnector};
-use monoio_transports::connectors::{Connector, TcpConnector};
-#[cfg(feature = "https")]
+use monoio_transports::connectors::{Connector, TcpConnector, TlsStream, TcpTlsAddr as TlsKey};
 use monoio_transports::connectors::TlsConnector;
-#[cfg(feature = "https")]
-use monoio_transports::connectors::{TlsStream, TcpTlsAddr as Key};
 
-#[cfg(not(feature = "https"))]
-use super::key::TcpAddr as Key;
 use super::Proto;
+use super::key::TcpAddr as Key;
 use crate::response::{Response};
 use crate::error::{Error, Result};
 use crate::request::HttpRequest;
@@ -27,19 +23,30 @@ impl MonoioClient {
     }
 }
 
+impl Clone for MonoioClient {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
 
 struct ClientInner {
     config: ClientConfig,
-    #[cfg(not(feature = "https"))]
-    http_connector: HttpConnector<TcpConnector, Key, TcpStream>,
-    #[cfg(feature = "https")]
-    http_connector: HttpConnector<TlsConnector<TcpConnector>, Key, TlsStream<TcpStream>>,
+    http_connector: HttpConnectorType,
+}
+
+#[derive(Default, Clone, Debug)]
+struct ClientConfig {
+    default_headers: Rc<HeaderMap>,
 }
 
 
 #[derive(Default, Clone)]
-struct ClientConfig {
+struct ClientBuilderConfig {
     proto: Proto,
+    enable_https: bool,
     pool_disabled: bool,
     max_idle_connections: usize,
     idle_timeout_duration: u32,
@@ -48,10 +55,14 @@ struct ClientConfig {
     max_concurrent_streams: Option<u32>,
 }
 
+enum HttpConnectorType {
+    HTTP(HttpConnector<TcpConnector, Key, TcpStream>),
+    HTTPS(HttpConnector<TlsConnector<TcpConnector>, TlsKey, TlsStream<TcpStream>>)
+}
 
 #[derive(Default)]
 pub struct ClientBuilder {
-    build_config: ClientConfig
+    build_config: ClientBuilderConfig
 }
 
 impl ClientBuilder {
@@ -85,58 +96,80 @@ impl ClientBuilder {
         self
     }
 
-    pub fn build_http1(mut self) -> Self {
+    pub fn http1_only(mut self) -> Self {
         self.build_config.proto = Proto::Http1;
         self
     }
 
-    pub fn build_http2(mut self) -> Self {
+    pub fn http2_prior_knowledge(mut self) -> Self {
         self.build_config.proto = Proto::Http2;
         self
     }
 
+    pub fn enable_https(mut self) -> Self {
+        self.build_config.enable_https = true;
+        self
+    }
+}
+
+macro_rules! apply_parameter_from_config {
+    ($connector:expr, $method:ident($val:expr)) => {
+        match $connector {
+            HttpConnectorType::HTTP(ref mut c) => c.$method($val),
+            HttpConnectorType::HTTPS(ref mut c) => c.$method($val),
+        }
+    };
+
+    ($connector:expr, $builder:ident().$method:ident($val:expr)) => {
+        match $connector {
+            HttpConnectorType::HTTP(ref mut c) => c.$builder().$method($val),
+            HttpConnectorType::HTTPS(ref mut c) => c.$builder().$method($val),
+        }
+    };
+}
+
+impl ClientBuilder {
     pub fn build(self) -> MonoioClient {
-        let config = self.build_config.clone();
+        let build_config = self.build_config.clone();
+        let config = ClientConfig::default();
         let tcp_connector = TcpConnector::default();
 
-        #[cfg(not(feature = "https"))]
-        let mut http_connector = HttpConnector::new(tcp_connector);
-        #[cfg(not(feature = "https"))]
-        if config.proto == Proto::Http1 {
-            http_connector.set_http1_only();
-        }
-        #[cfg(not(feature = "https"))]
-        if config.proto == Proto::Http2 {
-            http_connector.set_http2_only();
-        }
+        let mut http_connector = if build_config.enable_https {
+            let alpn = match build_config.proto {
+                Proto::Http1 => vec!["http/1.1"],
+                Proto::Http2 => vec!["h2"],
+                Proto::Auto => vec!["http/1.1", "h2"]
+            };
 
-        #[cfg(feature = "https")]
-        let alpn = match config.proto {
-            Proto::Http1 => vec!["http/1.1"],
-            Proto::Http2 => vec!["h2"],
-            Proto::Auto => vec!["http/1.1", "h2"]
+            let tls_connector = TlsConnector::new_with_tls_default(tcp_connector, Some(alpn));
+
+            HttpConnectorType::HTTPS(HttpConnector::new(tls_connector))
+        } else {
+            let mut connector = HttpConnector::new(tcp_connector);
+
+            if build_config.proto == Proto::Http1 {
+                connector.set_http1_only();
+            }
+
+            if build_config.proto == Proto::Http2 {
+                connector.set_http2_only();
+            }
+
+            HttpConnectorType::HTTP(connector)
         };
-        #[cfg(feature = "https")]
-        let tls_connector = TlsConnector::new_with_tls_default(tcp_connector, Some(alpn));
-        #[cfg(feature = "https")]
-        let mut http_connector = HttpConnector::new(tls_connector);
 
-        if let Some(val) = config.initial_max_streams {
-            http_connector.h2_builder().initial_max_send_streams(val);
+        if let Some(val) = build_config.initial_max_streams {
+            apply_parameter_from_config!(http_connector, h2_builder().initial_max_send_streams(val));
         }
 
-        if let Some(val) = config.initial_max_streams {
-            http_connector.h2_builder().initial_max_send_streams(val);
+        if let Some(val) = build_config.max_concurrent_streams {
+            apply_parameter_from_config!(http_connector, h2_builder().max_concurrent_streams(val));
         }
 
-        if let Some(val) = config.max_concurrent_streams {
-            http_connector.h2_builder().max_concurrent_streams(val);
-        }
-
-        http_connector.set_read_timeout(config.read_timeout);
+        apply_parameter_from_config!(http_connector, set_read_timeout(build_config.read_timeout));
 
         let inner = Rc::new(ClientInner {
-            config: self.build_config.clone(),
+            config,
             http_connector
         });
 
@@ -144,48 +177,45 @@ impl ClientBuilder {
     }
 }
 
-
-impl Clone for MonoioClient {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
-    }
-}
-
 impl MonoioClient {
     pub fn make_request(&self) -> HttpRequest {
-        HttpRequest::new(self.clone())
+        let mut request = HttpRequest::new(self.clone());
+        for (key, val) in self.inner.config.default_headers.iter() {
+            request = request.set_header(key, val)
+        }
+
+        request
     }
 
-    fn verify_request_and_client_protocols(client_protocol: &Proto, req: &Request<HttpBody>) -> Result<()> {
-        // h2 supports few http/1.1 methods, but still making it redundant
-        if (client_protocol.eq(&Proto::Http1) && req.version().eq(&Version::HTTP_2)) ||
-            (client_protocol.eq(&Proto::Http2) && req.version().eq(&Version::HTTP_11))
-        {
-            return Err(Error::HttpVersionMismatch(
-                format!("request version: {:?}, client alpn: {:?}", req.version(), client_protocol)
-            ))
+    pub(crate) async fn send_request(
+        &self,
+        req: Request<HttpBody>,
+        uri: Uri
+    ) -> Result<Response<HttpBody>> {
+        let (response, _) = match self.inner.http_connector {
+            HttpConnectorType::HTTP(ref connector) => {
+                let key = uri
+                    .try_into()
+                    .map_err(|e| Error::UriKeyError(e))?;
+                let mut conn = connector
+                    .connect(key)
+                    .await
+                    .map_err(|e| Error::HttpTransportError(e))?;
+                conn.send_request(req).await
+            },
+
+            HttpConnectorType::HTTPS(ref connector) => {
+                let key = uri
+                    .try_into()
+                    .map_err(|e| Error::UriKeyError(e))?;
+                let mut conn = connector
+                    .connect(key)
+                    .await
+                    .map_err(|e| Error::HttpTransportError(e))?;
+                conn.send_request(req).await
+            }
         };
 
-        Ok(())
-    }
-
-    pub(crate) async fn send_request(&self, req: Request<HttpBody>, uri: Uri) -> Result<Response<HttpBody>> {
-        Self::verify_request_and_client_protocols(&self.inner.config.proto, &req)?;
-
-        #[cfg(feature = "https")]
-        let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
-        #[cfg(not(feature = "https"))]
-        let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
-        let mut conn = self
-            .inner
-            .http_connector
-            .connect(key)
-            .await
-            .map_err(|e| Error::HttpTransportError(e))?;
-
-        let (res, _) = conn.send_request(req).await;
-        res.map_err(|e| Error::HttpResponseError(e))
+        response.map_err(|e| Error::HttpResponseError(e))
     }
 }
