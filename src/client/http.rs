@@ -53,6 +53,7 @@ struct ClientBuilderConfig {
     read_timeout: Option<Duration>,
     initial_max_streams: Option<usize>,
     max_concurrent_streams: Option<u32>,
+    default_headers: HeaderMap,
 }
 
 enum HttpConnectorType {
@@ -66,16 +67,24 @@ pub struct ClientBuilder {
 }
 
 impl ClientBuilder {
+    /// Sets the default headers. These headers will be set for every request by the client.
+    pub fn default_headers(mut self, val: HeaderMap) -> Self {
+        self.build_config.default_headers = val;
+        self
+    }
+    /// Disables connection pooling for the client
     pub fn disable_connection_pool(mut self) -> Self {
         self.build_config.pool_disabled = true;
         self
     }
 
-    pub fn set_idle_connections_per_host(mut self, val: usize) -> Self {
+    /// Sets the number of idle connections allowed in the pool
+    pub fn max_idle_connections(mut self, val: usize) -> Self {
         self.build_config.max_idle_connections = val;
         self
     }
 
+    /// Sets timeout in seconds for idle connections before they are removed from the pool
     pub fn idle_connection_timeout_duration(mut self, val: u32) -> Self {
         self.build_config.idle_timeout_duration = val;
         self
@@ -91,21 +100,25 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the max number of concurrent streams per connection. Default is 100
     pub fn max_concurrent_streams(mut self, val: u32) -> Self {
         self.build_config.max_concurrent_streams = Some(val);
         self
     }
 
+    /// Sets the client protocol to use HTTP1 only. Default is Auto
     pub fn http1_only(mut self) -> Self {
         self.build_config.proto = Proto::Http1;
         self
     }
 
+    /// Sets the client protocol to use HTTP2 only. Default is Auto
     pub fn http2_prior_knowledge(mut self) -> Self {
         self.build_config.proto = Proto::Http2;
         self
     }
 
+    /// Enables support for https scheme. Default is http only
     pub fn enable_https(mut self) -> Self {
         self.build_config.enable_https = true;
         self
@@ -135,6 +148,7 @@ impl ClientBuilder {
         let tcp_connector = TcpConnector::default();
 
         let mut http_connector = if build_config.enable_https {
+            // TLS based Connector. Client will negotiate the connection using ALPN, no need to set Protocols.
             let alpn = match build_config.proto {
                 Proto::Http1 => vec!["http/1.1"],
                 Proto::Http2 => vec!["h2"],
@@ -145,12 +159,14 @@ impl ClientBuilder {
 
             HttpConnectorType::HTTPS(HttpConnector::new(tls_connector))
         } else {
+            // Default TCP based Connector
             let mut connector = HttpConnector::new(tcp_connector);
 
             if build_config.proto == Proto::Http1 {
                 connector.set_http1_only();
             }
 
+            // Assumes http2 prior knowledge
             if build_config.proto == Proto::Http2 {
                 connector.set_http2_only();
             }
@@ -178,6 +194,7 @@ impl ClientBuilder {
 }
 
 impl MonoioClient {
+    /// Returns a new http request with default parameters
     pub fn make_request(&self) -> HttpRequest {
         let mut request = HttpRequest::new(self.clone());
         for (key, val) in self.inner.config.default_headers.iter() {
@@ -192,6 +209,7 @@ impl MonoioClient {
         req: Request<HttpBody>,
         uri: Uri
     ) -> Result<Response<HttpBody>> {
+        // The connection pool keys for Non TLS and TLS based connectors are slightly different
         let (response, _) = match self.inner.http_connector {
             HttpConnectorType::HTTP(ref connector) => {
                 let key = uri

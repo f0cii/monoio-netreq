@@ -16,7 +16,7 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    pub fn new(response: Response<HttpBody>) -> Self {
+    pub(crate) fn new(response: Response<HttpBody>) -> Self {
         let (parts, body) = response.into_parts();
 
         HttpResponse {

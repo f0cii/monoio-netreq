@@ -1,4 +1,4 @@
-pub mod http_conn;
+pub mod http;
 mod key;
 
 #[derive(Default, Clone, PartialEq, Debug)]

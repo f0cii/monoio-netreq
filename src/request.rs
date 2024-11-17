@@ -5,7 +5,7 @@ use http::request::Builder;
 use http::header::{CONNECTION, HOST, TE, TRANSFER_ENCODING, UPGRADE};
 use monoio_http::common::body::{FixedBody, HttpBody};
 
-use super::client::http_conn::MonoioClient;
+use super::client::http::MonoioClient;
 use super::error::Error;
 use super::response::HttpResponse;
 
@@ -23,7 +23,7 @@ pub struct HttpRequest {
 }
 
 impl HttpRequest {
-    pub fn new(client: MonoioClient) -> HttpRequest {
+    pub(crate) fn new(client: MonoioClient) -> HttpRequest {
         HttpRequest { client, builder: Builder::default() }
     }
 
@@ -45,6 +45,8 @@ impl HttpRequest {
         self
     }
 
+    /// Connection specific headers will be removed from http2 requests.
+    /// http2 also restricts 'host' as header. host is mandatory in http1 and added by default if not set
     pub fn set_header<K, T>(mut self, key: K, value: T) -> Self
         where
             HeaderName: TryFrom<K>,
@@ -56,6 +58,7 @@ impl HttpRequest {
         self
     }
 
+    /// Sets the http request version. Default is HTTP_11
     pub fn set_version(mut self, version: Version) -> Self {
         self.builder = self.builder.version(version);
         self
@@ -75,6 +78,10 @@ impl HttpRequest {
             .map_err(|e| Error::HttpRequestBuilder(e))?;
 
         let uri = http_request.uri().clone();
+
+        // Remove any connection specific headers to Http/2 requests
+        // Avoid adding host header to Http/2 based requests but not Http/1.1
+        // unless you are sending request to a proxy which downgrade the connection
         match http_request.version() {
             Version::HTTP_2 | Version::HTTP_3 => {
                 let headers = http_request.headers_mut();
@@ -96,6 +103,7 @@ impl HttpRequest {
         Ok((http_request, uri))
     }
 
+    /// Builds and sends a request without any request body
     pub async fn send(self) -> Result<HttpResponse, Error> {
         let (req, uri) = HttpRequest::build_http_request(self.builder, None)?;
         let http_response = self
@@ -105,6 +113,7 @@ impl HttpRequest {
         Ok(HttpResponse::new(http_response))
     }
 
+    /// Builds and sends a request with provided body. Must be converted to bytes
     pub async fn send_body(self, body: Bytes) -> Result<HttpResponse, Error> {
         let (req, uri) = HttpRequest::build_http_request(self.builder, Some(body))?;
         let http_response = self

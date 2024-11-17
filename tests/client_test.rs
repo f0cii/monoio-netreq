@@ -3,7 +3,7 @@ mod test {
     #[allow(unused_imports)]
     use bytes::Bytes;
     use http::{Method, Version};
-    use monoio_netreq::client::http_conn::MonoioClient;
+    use monoio_netreq::client::http::MonoioClient;
     #[allow(dead_code)]
     const BODY: &str = r#"{"data": {"name": "FNS"}}"#;
 
