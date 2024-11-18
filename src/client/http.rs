@@ -1,21 +1,21 @@
-use std::rc::Rc;
-use std::time::Duration;
 use http::{HeaderMap, Request, Uri};
 use monoio::net::TcpStream;
 use monoio_http::common::body::HttpBody;
-use monoio_transports::http::{HttpConnector};
-use monoio_transports::connectors::{Connector, TcpConnector, TlsStream, TcpTlsAddr as TlsKey};
 use monoio_transports::connectors::TlsConnector;
+use monoio_transports::connectors::{Connector, TcpConnector, TcpTlsAddr as TlsKey, TlsStream};
+use monoio_transports::http::HttpConnector;
+use std::rc::Rc;
+use std::time::Duration;
 
-use super::Protocol;
 use super::key::TcpAddr as Key;
-use crate::response::{Response};
+use super::Protocol;
 use crate::error::{Error, Result};
 use crate::request::HttpRequest;
+use crate::response::Response;
 
 enum HttpConnectorType {
     HTTP(HttpConnector<TcpConnector, Key, TcpStream>),
-    HTTPS(HttpConnector<TlsConnector<TcpConnector>, TlsKey, TlsStream<TcpStream>>)
+    HTTPS(HttpConnector<TlsConnector<TcpConnector>, TlsKey, TlsStream<TcpStream>>),
 }
 
 #[derive(Default, Clone, Debug)]
@@ -46,7 +46,6 @@ impl Clone for MonoioClient {
     }
 }
 
-// TODO: Can we include monoio-transports locally and allow customized client pool sizes ?
 #[derive(Default, Clone)]
 struct ClientBuilderConfig {
     protocol: Protocol,
@@ -62,7 +61,7 @@ struct ClientBuilderConfig {
 
 #[derive(Default)]
 pub struct ClientBuilder {
-    build_config: ClientBuilderConfig
+    build_config: ClientBuilderConfig,
 }
 
 impl ClientBuilder {
@@ -151,7 +150,7 @@ impl ClientBuilder {
             let alpn = match build_config.protocol {
                 Protocol::Http1 => vec!["http/1.1"],
                 Protocol::Http2 => vec!["h2"],
-                Protocol::Auto => vec!["http/1.1", "h2"]
+                Protocol::Auto => vec!["http/1.1", "h2"],
             };
 
             let tls_connector = TlsConnector::new_with_tls_default(tcp_connector, Some(alpn));
@@ -174,7 +173,10 @@ impl ClientBuilder {
         };
 
         if let Some(val) = build_config.initial_max_streams {
-            apply_parameter_from_config!(http_connector, h2_builder().initial_max_send_streams(val));
+            apply_parameter_from_config!(
+                http_connector,
+                h2_builder().initial_max_send_streams(val)
+            );
         }
 
         if let Some(val) = build_config.max_concurrent_streams {
@@ -185,7 +187,7 @@ impl ClientBuilder {
 
         let inner = Rc::new(ClientInner {
             config,
-            http_connector
+            http_connector,
         });
 
         MonoioClient { inner }
@@ -206,25 +208,21 @@ impl MonoioClient {
     pub(crate) async fn send_request(
         &self,
         req: Request<HttpBody>,
-        uri: Uri
+        uri: Uri,
     ) -> Result<Response<HttpBody>> {
         // The connection pool keys for Non TLS and TLS based connectors are slightly different
         let (response, _) = match self.inner.http_connector {
             HttpConnectorType::HTTP(ref connector) => {
-                let key = uri
-                    .try_into()
-                    .map_err(|e| Error::UriKeyError(e))?;
+                let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
                 let mut conn = connector
                     .connect(key)
                     .await
                     .map_err(|e| Error::HttpTransportError(e))?;
                 conn.send_request(req).await
-            },
+            }
 
             HttpConnectorType::HTTPS(ref connector) => {
-                let key = uri
-                    .try_into()
-                    .map_err(|e| Error::UriKeyError(e))?;
+                let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
                 let mut conn = connector
                     .connect(key)
                     .await

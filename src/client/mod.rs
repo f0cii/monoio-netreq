@@ -1,17 +1,17 @@
 pub mod http;
-mod key;
-
-#[cfg(feature = "hyper")]
-pub mod hyper_body;
 #[cfg(feature = "hyper")]
 pub mod hyper;
+#[cfg(feature = "hyper")]
+pub(crate) mod hyper_body;
+mod key;
+pub(crate) mod monoio_body;
 
 #[derive(Default, Clone, PartialEq, Debug)]
 enum Protocol {
     Http1,
     Http2,
     #[default]
-    Auto
+    Auto,
 }
 
 impl Protocol {

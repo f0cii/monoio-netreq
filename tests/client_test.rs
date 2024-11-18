@@ -7,7 +7,6 @@ mod test {
     #[cfg(feature = "hyper")]
     use monoio_netreq::client::hyper::MonoioHyperClient;
 
-    #[allow(dead_code)]
     const BODY: &str = r#"{"data": {"name": "FNS"}}"#;
 
     #[monoio::test(driver = "legacy")]
@@ -133,7 +132,7 @@ mod test {
             .set_uri("http://nghttp2.org/httpbin/ip")
             .set_header("Content-Type", "application/json")
             .set_version(Version::HTTP_11)
-            .send(body)
+            .send_body(body)
             .await?;
 
         assert_eq!(http_result.status(), 200);
@@ -155,7 +154,7 @@ mod test {
             .set_uri("http://nghttp2.org/httpbin/ip")
             .set_header("Content-Type", "application/json")
             .set_version(Version::HTTP_2)
-            .send(body)
+            .send_body(body)
             .await?;
 
         assert_eq!(http_result.status(), 200);
@@ -169,18 +168,17 @@ mod test {
     async fn hyper_non_tls_client() -> anyhow::Result<()> {
         let client = MonoioHyperClient::builder()
             .build();
-        let body = Bytes::from(BODY);
         let http_result = client
             .new_request()
             .set_method(Method::GET)
             .set_uri("http://nghttp2.org/httpbin/ip")
             .set_header("Content-Type", "application/json")
             .set_version(Version::HTTP_11)
-            .send(body)
+            .send()
             .await?;
 
         assert_eq!(http_result.status(), 200);
-        // Upgrades the connection to http2
+        // Server accepted connection upgrade to HTTP_2 from HTTP_11
         assert_eq!(http_result.version(), Version::HTTP_2);
 
         Ok(())

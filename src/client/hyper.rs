@@ -1,18 +1,29 @@
-use std::rc::Rc;
-use std::time::Duration;
+use http::header::{CONNECTION, UPGRADE};
 use http::{HeaderMap, HeaderValue, Request, Uri};
 use hyper::body::Incoming;
-use monoio_transports::connectors::{Connector, TcpConnector};
 use monoio_transports::connectors::pollio::PollIo;
+use monoio_transports::connectors::{Connector, TcpConnector};
 use monoio_transports::http::hyper::{HyperH1Connector, HyperH2Connector};
 use monoio_transports::pool::ConnectionPool;
+use std::rc::Rc;
+use std::time::Duration;
 
 use super::hyper_body::HyperBody;
-use super::Protocol;
 use super::key::TcpAddr as Key;
-use crate::request::HttpRequest;
+use super::Protocol;
 use crate::error::Error;
+use crate::request::HttpRequest;
 
+const HTTP2_SETTINGS: &str = "HTTP2-Settings";
+
+#[derive(Default, Clone, Debug)]
+struct HyperClientConfig {
+    default_headers: Rc<HeaderMap>,
+}
+
+impl HyperClientConfig {
+    pub fn new(header_map: HeaderMap) -> Self { HyperClientConfig { default_headers: Rc::new(header_map) } }
+}
 
 struct HyperClientInner {
     config: HyperClientConfig,
@@ -33,12 +44,14 @@ impl MonoioHyperClient {
 
 impl Clone for MonoioHyperClient {
     fn clone(&self) -> Self {
-        MonoioHyperClient { inner: self.inner.clone() }
+        MonoioHyperClient {
+            inner: self.inner.clone(),
+        }
     }
 }
 
 #[derive(Default, Clone)]
-struct HyperClientConfig {
+struct HyperClientBuilderConfig {
     protocol: Protocol,
     pool_disabled: bool,
     enable_https: bool,
@@ -52,7 +65,7 @@ struct HyperClientConfig {
 
 #[derive(Default)]
 pub struct HyperClientBuilder {
-    build_config: HyperClientConfig,
+    build_config: HyperClientBuilderConfig,
 }
 
 impl HyperClientBuilder {
@@ -109,34 +122,49 @@ impl HyperClientBuilder {
 
 impl HyperClientBuilder {
     pub fn build(&self) -> MonoioHyperClient {
-        let config = self.build_config.clone();
+        let build_config = self.build_config.clone();
         let tcp_connector = TcpConnector::default();
+        let protocol_h1 = build_config.protocol.is_protocol_h1();
+        let protocol_h2 = build_config.protocol.is_protocol_h2();
+        let protocol_auto = build_config.protocol.is_protocol_auto();
+
+        let config = if protocol_auto {
+            // If protocol is Auto, add connection upgrade headers to default headers for every request
+            let mut default_headers = build_config.default_headers.clone();
+            default_headers.insert(UPGRADE, HeaderValue::from_static("h2c"));
+            default_headers.insert(
+                CONNECTION,
+                HeaderValue::from_static("Upgrade, HTTP2-Settings"),
+            );
+            default_headers.insert(HTTP2_SETTINGS, HeaderValue::from_static("AAMAAABkAAQAAP__"));
+
+            HyperClientConfig::new(default_headers)
+        } else {
+            HyperClientConfig::default()
+        };
+
         // Build H1 connector with connection pool
-        let build_h1_connector = config.protocol.is_protocol_auto() || config.protocol.is_protocol_h1();
-        let h1_connector = if build_h1_connector {
-            let connection_pool = if config.pool_disabled {
+        let h1_connector = if protocol_h1 || protocol_auto {
+            let connection_pool = if build_config.pool_disabled {
                 ConnectionPool::new(Some(0))
             } else {
-                let idle_timeout = config.idle_timeout_duration;
-                let max_idle = config.max_idle_connections;
+                let idle_timeout = build_config.idle_timeout_duration;
+                let max_idle = build_config.max_idle_connections;
                 ConnectionPool::new_with_idle_interval(idle_timeout, max_idle)
             };
 
             HyperH1Connector::new_with_pool(PollIo(tcp_connector), connection_pool)
-
         } else {
             HyperH1Connector::new(PollIo(tcp_connector))
         };
 
-
         // Build H2 connector with connection pool
-        let build_h2_connector = config.protocol.is_protocol_auto() || config.protocol.is_protocol_h2();
-        let h2_connector = if build_h2_connector {
-            let connection_pool = if config.pool_disabled {
+        let h2_connector = if protocol_h2 || protocol_auto {
+            let connection_pool = if build_config.pool_disabled {
                 ConnectionPool::new(Some(0))
             } else {
-                let max_idle = config.max_idle_connections;
-                let idle_timeout = config.idle_timeout_duration;
+                let max_idle = build_config.max_idle_connections;
+                let idle_timeout = build_config.idle_timeout_duration;
                 ConnectionPool::new_with_idle_interval(idle_timeout, max_idle)
             };
 
@@ -145,7 +173,7 @@ impl HyperClientBuilder {
             HyperH2Connector::new(PollIo(tcp_connector))
         };
 
-        let protocol = config.protocol.clone();
+        let protocol = build_config.protocol.clone();
         let inner = Rc::new(HyperClientInner {
             config,
             protocol,
@@ -169,12 +197,10 @@ impl MonoioHyperClient {
 
     pub(crate) async fn send_request(
         &self,
-        mut req: Request<HyperBody>,
-        uri: Uri
+        req: Request<HyperBody>,
+        uri: Uri,
     ) -> Result<http::Response<Incoming>, Error> {
-        let key = uri
-            .try_into()
-            .map_err(|e| Error::UriKeyError(e))?;
+        let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
 
         let response = match self.inner.protocol {
             Protocol::Http1 => {
@@ -186,7 +212,7 @@ impl MonoioHyperClient {
                     .map_err(|e| Error::HyperTransportError(e))?;
 
                 conn.send_request(req).await
-            },
+            }
             Protocol::Http2 => {
                 let mut conn = self
                     .inner
@@ -196,19 +222,8 @@ impl MonoioHyperClient {
                     .map_err(|e| Error::HyperTransportError(e))?;
 
                 conn.send_request(req).await
-            },
+            }
             Protocol::Auto => {
-                // TODO: Can we shift this headers part to default headers ?
-                req.headers_mut().insert("Upgrade", HeaderValue::from_static("h2c"));
-                req.headers_mut().insert(
-                    "Connection",
-                    HeaderValue::from_static("Upgrade, HTTP2-Settings")
-                );
-                req.headers_mut().insert(
-                    "HTTP2-Settings",
-                    HeaderValue::from_static("AAMAAABkAAQAAP__")
-                );
-
                 // First create Http/1.1 connection with upgrade headers set
                 let mut conn = self
                     .inner
@@ -223,7 +238,8 @@ impl MonoioHyperClient {
                     .map_err(|e| Error::HyperResponseError(e))?;
 
                 // Check if server response contains the upgrade header
-                let should_upgrade_to_h2 = response.headers()
+                let should_upgrade_to_h2 = response
+                    .headers()
                     .get("upgrade")
                     .and_then(|v| v.to_str().ok())
                     .map(|s| s.to_lowercase().contains("h2c"))
