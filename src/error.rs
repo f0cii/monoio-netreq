@@ -3,6 +3,10 @@ use http::Error as HttpError;
 use http::header::InvalidHeaderValue;
 use serde_json::Error as SerdeError;
 use monoio_transports::{FromUriError, TransportError};
+#[cfg(feature = "hyper")]
+use monoio_transports::connectors::pollio::PollConnectError;
+#[cfg(feature = "hyper")]
+use monoio_transports::http::hyper::HyperError;
 use thiserror::Error as ThisError;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -17,10 +21,16 @@ pub enum Error {
     HttpVersionMismatch(String),
     #[error("error making pool key from uri: {0:?}")]
     UriKeyError(FromUriError),
-    #[error("transport error requesting a connection: {0:?}")]
+    #[error("http transport error requesting a connection: {0:?}")]
     HttpTransportError(TransportError),
+    #[cfg(feature = "hyper")]
+    #[error("hyper transport error requesting a connection: {0:?}")]
+    HyperTransportError(HyperError<PollConnectError<std::io::Error>>),
     #[error("{0:?}")]
     HttpResponseError(MonoioHttpError),
+    #[cfg(feature = "hyper")]
+    #[error("{0:?}")]
+    HyperResponseError(hyper::Error),
     #[error("{0:?}")]
     ByteDecodeError(MonoioHttpError),
     #[error("serde body deserialize error: {0:?}")]

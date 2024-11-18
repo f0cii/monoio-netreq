@@ -7,11 +7,26 @@ use monoio_transports::http::{HttpConnector};
 use monoio_transports::connectors::{Connector, TcpConnector, TlsStream, TcpTlsAddr as TlsKey};
 use monoio_transports::connectors::TlsConnector;
 
-use super::Proto;
+use super::Protocol;
 use super::key::TcpAddr as Key;
 use crate::response::{Response};
 use crate::error::{Error, Result};
 use crate::request::HttpRequest;
+
+enum HttpConnectorType {
+    HTTP(HttpConnector<TcpConnector, Key, TcpStream>),
+    HTTPS(HttpConnector<TlsConnector<TcpConnector>, TlsKey, TlsStream<TcpStream>>)
+}
+
+#[derive(Default, Clone, Debug)]
+struct ClientConfig {
+    default_headers: Rc<HeaderMap>,
+}
+
+struct ClientInner {
+    config: ClientConfig,
+    http_connector: HttpConnectorType,
+}
 
 pub struct MonoioClient {
     inner: Rc<ClientInner>,
@@ -31,21 +46,10 @@ impl Clone for MonoioClient {
     }
 }
 
-
-struct ClientInner {
-    config: ClientConfig,
-    http_connector: HttpConnectorType,
-}
-
-#[derive(Default, Clone, Debug)]
-struct ClientConfig {
-    default_headers: Rc<HeaderMap>,
-}
-
-
+// TODO: Can we include monoio-transports locally and allow customized client pool sizes ?
 #[derive(Default, Clone)]
 struct ClientBuilderConfig {
-    proto: Proto,
+    protocol: Protocol,
     enable_https: bool,
     pool_disabled: bool,
     max_idle_connections: usize,
@@ -54,11 +58,6 @@ struct ClientBuilderConfig {
     initial_max_streams: Option<usize>,
     max_concurrent_streams: Option<u32>,
     default_headers: HeaderMap,
-}
-
-enum HttpConnectorType {
-    HTTP(HttpConnector<TcpConnector, Key, TcpStream>),
-    HTTPS(HttpConnector<TlsConnector<TcpConnector>, TlsKey, TlsStream<TcpStream>>)
 }
 
 #[derive(Default)]
@@ -108,13 +107,13 @@ impl ClientBuilder {
 
     /// Sets the client protocol to use HTTP1 only. Default is Auto
     pub fn http1_only(mut self) -> Self {
-        self.build_config.proto = Proto::Http1;
+        self.build_config.protocol = Protocol::Http1;
         self
     }
 
     /// Sets the client protocol to use HTTP2 only. Default is Auto
     pub fn http2_prior_knowledge(mut self) -> Self {
-        self.build_config.proto = Proto::Http2;
+        self.build_config.protocol = Protocol::Http2;
         self
     }
 
@@ -149,10 +148,10 @@ impl ClientBuilder {
 
         let mut http_connector = if build_config.enable_https {
             // TLS based Connector. Client will negotiate the connection using ALPN, no need to set Protocols.
-            let alpn = match build_config.proto {
-                Proto::Http1 => vec!["http/1.1"],
-                Proto::Http2 => vec!["h2"],
-                Proto::Auto => vec!["http/1.1", "h2"]
+            let alpn = match build_config.protocol {
+                Protocol::Http1 => vec!["http/1.1"],
+                Protocol::Http2 => vec!["h2"],
+                Protocol::Auto => vec!["http/1.1", "h2"]
             };
 
             let tls_connector = TlsConnector::new_with_tls_default(tcp_connector, Some(alpn));
@@ -162,12 +161,12 @@ impl ClientBuilder {
             // Default TCP based Connector
             let mut connector = HttpConnector::new(tcp_connector);
 
-            if build_config.proto == Proto::Http1 {
+            if build_config.protocol.is_protocol_h1() {
                 connector.set_http1_only();
             }
 
             // Assumes http2 prior knowledge
-            if build_config.proto == Proto::Http2 {
+            if build_config.protocol.is_protocol_h2() {
                 connector.set_http2_only();
             }
 
@@ -195,7 +194,7 @@ impl ClientBuilder {
 
 impl MonoioClient {
     /// Returns a new http request with default parameters
-    pub fn make_request(&self) -> HttpRequest {
+    pub fn make_request(&self) -> HttpRequest<MonoioClient> {
         let mut request = HttpRequest::new(self.clone());
         for (key, val) in self.inner.config.default_headers.iter() {
             request = request.set_header(key, val)

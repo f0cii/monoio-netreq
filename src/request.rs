@@ -6,8 +6,14 @@ use http::header::{CONNECTION, HOST, TE, TRANSFER_ENCODING, UPGRADE};
 use monoio_http::common::body::{FixedBody, HttpBody};
 
 use super::client::http::MonoioClient;
+#[cfg(feature = "hyper")]
+use super::client::hyper::MonoioHyperClient;
+#[cfg(feature = "hyper")]
+use super::client::hyper_body::HyperBody;
 use super::error::Error;
 use super::response::HttpResponse;
+#[cfg(feature = "hyper")]
+use super::response::HyperResponse;
 
 const PROHIBITED_HEADERS: [HeaderName; 5] = [
     CONNECTION,
@@ -17,13 +23,13 @@ const PROHIBITED_HEADERS: [HeaderName; 5] = [
     UPGRADE
 ];
 
-pub struct HttpRequest {
-    client: MonoioClient,
+pub struct HttpRequest<C> {
+    client: C,
     builder: Builder
 }
 
-impl HttpRequest {
-    pub(crate) fn new(client: MonoioClient) -> HttpRequest {
+impl<C> HttpRequest<C> {
+    pub(crate) fn new(client: C) -> HttpRequest<C> {
         HttpRequest { client, builder: Builder::default() }
     }
 
@@ -71,7 +77,9 @@ impl HttpRequest {
         self.builder = self.builder.extension(extension);
         self
     }
+}
 
+impl HttpRequest<MonoioClient> {
     fn build_http_request(builder: Builder, body: Option<Bytes>) -> Result<(Request<HttpBody>, Uri), Error> {
         let mut http_request = builder
             .body(HttpBody::fixed_body(body))
@@ -121,5 +129,47 @@ impl HttpRequest {
             .send_request(req, uri)
             .await?;
         Ok(HttpResponse::new(http_response))
+    }
+}
+
+#[cfg(feature = "hyper")]
+impl HttpRequest<MonoioHyperClient> {
+    fn build_hyper_request(builder: Builder, body: Bytes) -> Result<(Request<HyperBody>, Uri), Error> {
+        let hyper_body = HyperBody::from(body);
+        let mut hyper_request = builder
+            .body(hyper_body)
+            .map_err(|e| Error::HttpRequestBuilder(e))?;
+
+        let uri = hyper_request.uri().clone();
+
+        match hyper_request.version() {
+            Version::HTTP_2 | Version::HTTP_3 => {
+                let headers = hyper_request.headers_mut();
+                for header in PROHIBITED_HEADERS.iter() {
+                    headers.remove(header);
+                }
+            },
+            _ => {
+                if let Some(host) = uri.host() {
+                    let host = HeaderValue::try_from(host).map_err(|e| Error::InvalidHeaderValue(e))?;
+                    let headers = hyper_request.headers_mut();
+                    if !headers.contains_key(HOST) {
+                        headers.insert(HOST, host);
+                    }
+                }
+            }
+        }
+
+        Ok((hyper_request, uri))
+    }
+
+    /// Build and sends a request
+    pub async fn send(self, body: Bytes) -> Result<HyperResponse, Error> {
+        let (req, uri) = HttpRequest::build_hyper_request(self.builder, body)?;
+        let http_response = self
+            .client
+            .send_request(req, uri)
+            .await?;
+        Ok(HyperResponse::new(http_response))
     }
 }
