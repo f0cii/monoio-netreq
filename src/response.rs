@@ -59,7 +59,7 @@ impl HttpResponse<HttpBody> {
         body
             .bytes()
             .await
-            .map_err(|e| Error::ByteDecodeError(e.to_string()))
+            .map_err(|e| Error::BytesError(e.to_string()))
     }
 
     pub async fn json<T: serde::de::DeserializeOwned>(self) -> Result<T, Error> {
@@ -67,7 +67,7 @@ impl HttpResponse<HttpBody> {
             .body
             .bytes()
             .await
-            .map_err(|e| Error::ByteDecodeError(e.to_string()))?;
+            .map_err(|e| Error::BytesError(e.to_string()))?;
         let d = serde_json::from_slice(&bytes).map_err(|e| Error::SerdeDeserializeError(e))?;
 
         Ok(d)
@@ -81,7 +81,7 @@ impl HttpResponse<Bytes> {
         let body = byte_stream
             .collect()
             .await
-            .map_err(|e| Error::ByteDecodeError(e.to_string()))?
+            .map_err(|e| Error::BytesError(e.to_string()))?
             .to_bytes();
 
         Ok(HttpResponse {

@@ -32,7 +32,9 @@ pub enum Error {
     #[error("{0:?}")]
     HyperResponseError(hyper::Error),
     #[error("{0:?}")]
-    ByteDecodeError(String),
+    BytesError(String),
     #[error("serde body deserialize error: {0:?}")]
     SerdeDeserializeError(SerdeError),
+    #[error("Hyper Connector was not initialized")]
+    ConnectorNotInitialized
 }

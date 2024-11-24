@@ -1,9 +1,10 @@
 use http::header::{CONNECTION, UPGRADE};
 use http::{HeaderMap, HeaderValue, Request, Uri};
 use hyper::body::Incoming;
+use hyper::client::conn::{http1::Builder as H1Builder, http2::Builder as H2Builder};
 use monoio_transports::connectors::pollio::PollIo;
 use monoio_transports::connectors::{Connector, TcpConnector};
-use monoio_transports::http::hyper::{HyperH1Connector, HyperH2Connector};
+use monoio_transports::http::hyper::{HyperH1Connector, HyperH2Connector, MonoioExecutor};
 use monoio_transports::pool::ConnectionPool;
 use std::rc::Rc;
 use std::time::Duration;
@@ -14,7 +15,8 @@ use super::Protocol;
 use crate::error::Error;
 use crate::request::HttpRequest;
 
-const HTTP2_SETTINGS: &str = "HTTP2-Settings";
+type HyperHttp1Connector = HyperH1Connector<PollIo<TcpConnector>, Key, HyperBody>;
+type HyperHttp2Connector = HyperH2Connector<PollIo<TcpConnector>, Key, HyperBody>;
 
 #[derive(Default, Clone, Debug)]
 struct HyperClientConfig {
@@ -28,8 +30,8 @@ impl HyperClientConfig {
 struct HyperClientInner {
     config: HyperClientConfig,
     protocol: Protocol,
-    h1_connector: HyperH1Connector<PollIo<TcpConnector>, Key, HyperBody>,
-    h2_connector: HyperH2Connector<PollIo<TcpConnector>, Key, HyperBody>,
+    h1_connector: Option<HyperHttp1Connector>,
+    h2_connector: Option<HyperHttp2Connector>,
 }
 
 pub struct MonoioHyperClient {
@@ -58,9 +60,8 @@ struct HyperClientBuilderConfig {
     default_headers: HeaderMap,
     max_idle_connections: Option<usize>,
     idle_timeout_duration: Option<Duration>,
-    read_timeout: Option<Duration>,
-    initial_max_streams: Option<usize>,
-    max_concurrent_streams: Option<u32>,
+    h1_builder: Option<H1Builder>,
+    h2_builder: Option<H2Builder<MonoioExecutor>>,
 }
 
 #[derive(Default)]
@@ -69,53 +70,68 @@ pub struct HyperClientBuilder {
 }
 
 impl HyperClientBuilder {
+    /// Disables the connection pooling feature.
+    /// When disabled, a new connection will be created for each request.
     pub fn disable_connection_pool(mut self) -> Self {
         self.build_config.pool_disabled = true;
         self
     }
 
+    /// Sets default headers that will be applied to all requests made through this client.
+    /// These headers can be overridden by request-specific headers.
     pub fn default_headers(mut self, val: HeaderMap) -> Self {
         self.build_config.default_headers = val;
         self
     }
 
+    /// Sets the maximum number of idle connections that can be kept in the connection pool.
+    /// Once this limit is reached, older idle connections will be dropped.
     pub fn max_idle_connections(mut self, val: usize) -> Self {
         self.build_config.max_idle_connections = Some(val);
         self
     }
 
+    /// Sets the duration after which an idle connection in the pool will be closed.
+    /// The timeout is specified in seconds.
     pub fn idle_connections_timeout(mut self, val: u64) -> Self {
         self.build_config.idle_timeout_duration = Some(Duration::from_secs(val));
         self
     }
 
-    pub fn read_timeout(mut self, val: u64) -> Self {
-        self.build_config.read_timeout = Some(Duration::from_secs(val));
-        self
-    }
-
-    pub fn initial_max_streams(mut self, val: usize) -> Self {
-        self.build_config.initial_max_streams = Some(val);
-        self
-    }
-
-    pub fn max_concurrent_streams(mut self, val: u32) -> Self {
-        self.build_config.max_concurrent_streams = Some(val);
-        self
-    }
-
+    /// Forces the client to use HTTP/1.1 protocol only, disabling HTTP/2 support.
+    /// Useful when you need to ensure HTTP/1.1 compatibility.
+    /// Default protocol is Auto
     pub fn http1_only(mut self) -> Self {
         self.build_config.protocol = Protocol::Http1;
         self
     }
 
+    /// Enables HTTP/2 prior knowledge mode, assuming all connections will use HTTP/2.
+    /// This skips the HTTP/1.1 -> HTTP/2 upgrade process.
+    /// Default protocol is Auto
     pub fn http2_prior_knowledge(mut self) -> Self {
         self.build_config.protocol = Protocol::Http2;
         self
     }
 
+    /// Enables HTTPS/TLS support for secure connections.
+    /// Must be called to make HTTPS requests.
     pub fn enable_https(mut self) -> Self {
         self.build_config.enable_https = true;
+        self
+    }
+
+    /// Replaces the default HTTP/1.1 builder with a custom configured one.
+    /// Useful when you need fine-grained control over HTTP/1.1 connection settings.
+    pub fn with_h1_builder(mut self, builder: H1Builder) -> Self {
+        self.build_config.h1_builder = Some(builder);
+        self
+    }
+
+    /// Replaces the default HTTP/2 builder with a custom configured one.
+    /// Allows detailed control over HTTP/2-specific settings using the Monoio executor.
+    pub fn with_h2_builder(mut self, builder: H2Builder<MonoioExecutor>) -> Self {
+        self.build_config.h2_builder = Some(builder);
         self
     }
 }
@@ -136,7 +152,7 @@ impl HyperClientBuilder {
                 CONNECTION,
                 HeaderValue::from_static("Upgrade, HTTP2-Settings"),
             );
-            default_headers.insert(HTTP2_SETTINGS, HeaderValue::from_static("AAMAAABkAAQAAP__"));
+            default_headers.insert("HTTP2-Settings", HeaderValue::from_static("AAMAAABkAAQAAP__"));
 
             HyperClientConfig::new(default_headers)
         } else {
@@ -153,9 +169,15 @@ impl HyperClientBuilder {
                 ConnectionPool::new_with_idle_interval(idle_timeout, max_idle)
             };
 
-            HyperH1Connector::new_with_pool(PollIo(tcp_connector), connection_pool)
+            let mut h1_connector = HyperH1Connector::new_with_pool(PollIo(tcp_connector), connection_pool);
+            if let Some(builder) = build_config.h1_builder {
+                h1_connector = h1_connector.with_hyper_builder(builder);
+            }
+
+            Some(h1_connector)
+
         } else {
-            HyperH1Connector::new(PollIo(tcp_connector))
+            None
         };
 
         // Build H2 connector with connection pool
@@ -168,9 +190,15 @@ impl HyperClientBuilder {
                 ConnectionPool::new_with_idle_interval(idle_timeout, max_idle)
             };
 
-            HyperH2Connector::new_with_pool(PollIo(tcp_connector), connection_pool)
+            let mut h2_connector = HyperH2Connector::new_with_pool(PollIo(tcp_connector), connection_pool);
+            if let Some(builder) = build_config.h2_builder {
+                h2_connector = h2_connector.with_hyper_builder(builder);
+            }
+
+            Some(h2_connector)
+
         } else {
-            HyperH2Connector::new(PollIo(tcp_connector))
+            None
         };
 
         let protocol = build_config.protocol.clone();
@@ -207,6 +235,8 @@ impl MonoioHyperClient {
                 let mut conn = self
                     .inner
                     .h1_connector
+                    .as_ref()
+                    .unwrap()
                     .connect(key)
                     .await
                     .map_err(|e| Error::HyperTransportError(e))?;
@@ -217,6 +247,8 @@ impl MonoioHyperClient {
                 let mut conn = self
                     .inner
                     .h2_connector
+                    .as_ref()
+                    .unwrap()
                     .connect(key)
                     .await
                     .map_err(|e| Error::HyperTransportError(e))?;
@@ -228,17 +260,19 @@ impl MonoioHyperClient {
                 let mut conn = self
                     .inner
                     .h1_connector
+                    .as_ref()
+                    .unwrap()
                     .connect(key.clone())
                     .await
                     .map_err(|e| Error::HyperTransportError(e))?;
 
-                let response = conn
+                let maybe_response = conn
                     .send_request(req.clone())
                     .await
                     .map_err(|e| Error::HyperResponseError(e))?;
 
                 // Check if server response contains the upgrade header
-                let should_upgrade_to_h2 = response
+                let should_upgrade_to_h2 = maybe_response
                     .headers()
                     .get("upgrade")
                     .and_then(|v| v.to_str().ok())
@@ -250,6 +284,8 @@ impl MonoioHyperClient {
                     let mut conn = self
                         .inner
                         .h2_connector
+                        .as_ref()
+                        .unwrap()
                         .connect(key)
                         .await
                         .map_err(|e| Error::HyperTransportError(e))?;
@@ -257,7 +293,7 @@ impl MonoioHyperClient {
                     conn.send_request(req).await
                 } else {
                     // Return the original H1 response
-                    Ok(response)
+                    Ok(maybe_response)
                 }
             }
         };
