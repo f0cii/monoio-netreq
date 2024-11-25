@@ -109,7 +109,7 @@ impl<C> HttpRequest<C> {
     /// The extension type must be `Clone + Any + 'static`.
     pub fn set_extension<T>(mut self, extension: T) -> Self
     where
-        T: Clone + Any + 'static,
+        T: Clone + Any + Send + Sync + 'static,
     {
         self.builder = self.builder.extension(extension);
         self
