@@ -1,17 +1,19 @@
+use std::any::Any;
+
 use bytes::Bytes;
+use http::{HeaderName, HeaderValue, Method, Request, Uri, Version};
 use http::header::{CONNECTION, HOST, TE, TRANSFER_ENCODING, UPGRADE};
 use http::request::Builder;
-use http::{HeaderName, HeaderValue, Method, Request, Uri, Version};
-use std::any::Any;
 use monoio_http::common::body::HttpBody;
 
-use super::client::http::MonoioClient;
-#[cfg(feature = "hyper")]
-use super::client::hyper::MonoioHyperClient;
-#[cfg(feature = "hyper")]
-use super::client::hyper_body::HyperBody;
-use super::client::monoio_body::MonoioBody;
+#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+use crate::hyper::client::MonoioHyperClient;
+#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+use crate::hyper::hyper_body::HyperBody;
+
 use super::error::Error;
+use super::http::client::MonoioClient;
+use super::http::monoio_body::MonoioBody;
 use super::response::HttpResponse;
 
 const PROHIBITED_HEADERS: [HeaderName; 5] = [
@@ -49,9 +51,9 @@ impl<C> HttpRequest<C> {
     /// request.set_uri(Uri::from_static("https://example.com/path"));
     /// ```
     pub fn set_uri<T>(mut self, uri: T) -> Self
-    where
-        Uri: TryFrom<T>,
-        <Uri as TryFrom<T>>::Error: Into<http::Error>,
+        where
+            Uri: TryFrom<T>,
+            <Uri as TryFrom<T>>::Error: Into<http::Error>,
     {
         self.builder = self.builder.uri(uri);
         self
@@ -65,9 +67,9 @@ impl<C> HttpRequest<C> {
     /// request.set_method(Method::POST);
     /// ```
     pub fn set_method<T>(mut self, method: T) -> Self
-    where
-        Method: TryFrom<T>,
-        <Method as TryFrom<T>>::Error: Into<http::Error>,
+        where
+            Method: TryFrom<T>,
+            <Method as TryFrom<T>>::Error: Into<http::Error>,
     {
         self.builder = self.builder.method(method);
         self
@@ -82,11 +84,11 @@ impl<C> HttpRequest<C> {
     /// request.set_header(HeaderName::from_static("authorization"), "Bearer token");
     /// ```
     pub fn set_header<K, T>(mut self, key: K, value: T) -> Self
-    where
-        HeaderName: TryFrom<K>,
-        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
-        HeaderValue: TryFrom<T>,
-        <HeaderValue as TryFrom<T>>::Error: Into<http::Error>,
+        where
+            HeaderName: TryFrom<K>,
+            <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
+            HeaderValue: TryFrom<T>,
+            <HeaderValue as TryFrom<T>>::Error: Into<http::Error>,
     {
         self.builder = self.builder.header(key, value);
         self
@@ -108,8 +110,8 @@ impl<C> HttpRequest<C> {
     /// Extensions can be used to store extra information that travels along with the request.
     /// The extension type must be `Clone + Any + 'static`.
     pub fn set_extension<T>(mut self, extension: T) -> Self
-    where
-        T: Clone + Any + Send + Sync + 'static,
+        where
+            T: Clone + Any + Send + Sync + 'static,
     {
         self.builder = self.builder.extension(extension);
         self
@@ -172,7 +174,7 @@ impl HttpRequest<MonoioClient> {
     }
 }
 
-#[cfg(feature = "hyper")]
+#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
 impl HttpRequest<MonoioHyperClient> {
     /// Sends the HTTP request without a body.
     /// Returns a Result containing either the HTTP response or an error.

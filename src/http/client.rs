@@ -1,15 +1,16 @@
+use std::rc::Rc;
+use std::time::Duration;
+
 use http::{HeaderMap, Request, Uri};
 use monoio::net::TcpStream;
 use monoio_http::common::body::HttpBody;
 use monoio_transports::connectors::TlsConnector;
 use monoio_transports::connectors::{Connector, TcpConnector, TcpTlsAddr as TlsKey, TlsStream};
 use monoio_transports::http::HttpConnector;
-use std::rc::Rc;
-use std::time::Duration;
 
-use super::key::TcpAddr as Key;
-use super::Protocol;
 use crate::error::{Error, Result};
+use crate::hyper::key::TcpAddr as Key;
+use crate::Protocol;
 use crate::request::HttpRequest;
 use crate::response::Response;
 
@@ -51,8 +52,8 @@ struct ClientBuilderConfig {
     protocol: Protocol,
     enable_https: bool,
     pool_disabled: bool,
-    max_idle_connections: usize,
-    idle_timeout_duration: u32,
+    max_idle_connections: Option<usize>,
+    idle_timeout_duration: Option<Duration>,
     read_timeout: Option<Duration>,
     initial_max_streams: Option<usize>,
     max_concurrent_streams: Option<u32>,
@@ -65,7 +66,7 @@ pub struct ClientBuilder {
 }
 
 impl ClientBuilder {
-    /// Sets default headers that will be applied to all requests made through this client.
+    /// Sets default headers that will be applied to all requests made through this http.
     /// These headers can be overridden by request-specific headers.
     pub fn default_headers(mut self, val: HeaderMap) -> Self {
         self.build_config.default_headers = val;
@@ -82,14 +83,14 @@ impl ClientBuilder {
     /// Sets the maximum number of idle connections that can be kept in the connection pool.
     /// Once this limit is reached, older idle connections will be dropped.
     pub fn max_idle_connections(mut self, val: usize) -> Self {
-        self.build_config.max_idle_connections = val;
+        self.build_config.max_idle_connections = Some(val);
         self
     }
 
     /// Sets the duration after which an idle connection in the pool will be closed.
     /// The timeout is specified in seconds.
-    pub fn idle_connection_timeout_duration(mut self, val: u32) -> Self {
-        self.build_config.idle_timeout_duration = val;
+    pub fn idle_connection_timeout_duration(mut self, val: u64) -> Self {
+        self.build_config.idle_timeout_duration = Some(Duration::from_secs(val));
         self
     }
 
@@ -116,7 +117,7 @@ impl ClientBuilder {
         self
     }
 
-    /// Forces the client to use HTTP/1.1 protocol only, disabling HTTP/2 support.
+    /// Forces the http to use HTTP/1.1 protocol only, disabling HTTP/2 support.
     /// Useful when you need to ensure HTTP/1.1 compatibility.
     pub fn http1_only(mut self) -> Self {
         self.build_config.protocol = Protocol::Http1;
@@ -161,7 +162,8 @@ impl ClientBuilder {
         let tcp_connector = TcpConnector::default();
 
         let mut http_connector = if build_config.enable_https {
-            // TLS based Connector. Client will negotiate the connection using ALPN, no need to set Protocols.
+            // TLS implemented Connector
+            // Client will negotiate the connection type using ALPN, no need to set Protocols explicitly
             let alpn = match build_config.protocol {
                 Protocol::Http1 => vec!["http/1.1"],
                 Protocol::Http2 => vec!["h2"],
@@ -170,16 +172,32 @@ impl ClientBuilder {
 
             let tls_connector = TlsConnector::new_with_tls_default(tcp_connector, Some(alpn));
 
-            HttpConnectorType::HTTPS(HttpConnector::new(tls_connector))
+            #[cfg(feature = "transports-patch")]
+                let https_connector = HttpConnectorType::HTTPS(HttpConnector::new_with_pool_options(
+                tls_connector,
+                build_config.max_idle_connections,
+                build_config.idle_timeout_duration,
+            ));
+            #[cfg(not(feature = "transports-patch"))]
+                let https_connector = HttpConnectorType::HTTPS(HttpConnector::new(tls_connector));
+
+            https_connector
         } else {
-            // Default TCP based Connector
-            let mut connector = HttpConnector::new(tcp_connector);
+            // Default TCP Connector without TLS support
+            #[cfg(not(feature = "transports-patch"))]
+                let mut connector = HttpConnector::new(tcp_connector);
+            #[cfg(feature = "transports-patch")]
+                let mut connector = HttpConnector::new_with_pool_options(
+                tcp_connector,
+                build_config.max_idle_connections,
+                build_config.idle_timeout_duration,
+            );
 
             if build_config.protocol.is_protocol_h1() {
                 connector.set_http1_only();
             }
 
-            // Assumes http2 prior knowledge
+            // Assumes prior http2 knowledge
             if build_config.protocol.is_protocol_h2() {
                 connector.set_http2_only();
             }
@@ -225,7 +243,7 @@ impl MonoioClient {
         req: Request<HttpBody>,
         uri: Uri,
     ) -> Result<Response<HttpBody>> {
-        // The connection pool keys for Non TLS and TLS based connectors are slightly different
+        // The connection pool keys for Non TLS and TLS based connectors slightly differ
         let (response, _) = match self.inner.http_connector {
             HttpConnectorType::HTTP(ref connector) => {
                 let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;

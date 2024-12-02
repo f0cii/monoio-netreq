@@ -3,9 +3,9 @@ mod test {
     #[allow(unused_imports)]
     use bytes::Bytes;
     use http::{Method, Version};
-    use monoio_netreq::client::http::MonoioClient;
-    #[cfg(feature = "hyper")]
-    use monoio_netreq::client::hyper::MonoioHyperClient;
+    use monoio_netreq::http::client::MonoioClient;
+    #[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+    use monoio_netreq::hyper::client::MonoioHyperClient;
 
     const BODY: &str = r#"{"data": {"name": "FNS"}}"#;
 
@@ -56,7 +56,7 @@ mod test {
     }
 
     #[monoio::test(driver = "legacy")]
-    // This client sets the Protocol as Auto
+    // This http sets the Protocol as Auto
     async fn alpn_auto_tls_client() -> anyhow::Result<()> {
         let client = MonoioClient::builder()
             .enable_https()
@@ -119,7 +119,7 @@ mod test {
         Ok(())
     }
 
-    #[cfg(feature = "hyper")]
+    #[cfg(any(feature = "hyper", feature = "hyper-patch"))]
     #[monoio::test(driver = "legacy")]
     async fn hyper_http1_non_tls_client() -> anyhow::Result<()> {
         let client = MonoioHyperClient::builder()
@@ -141,7 +141,7 @@ mod test {
         Ok(())
     }
 
-    #[cfg(feature = "hyper")]
+    #[cfg(any(feature = "hyper", feature = "hyper-patch"))]
     #[monoio::test(driver = "legacy")]
     async fn hyper_http2_non_tls_client() -> anyhow::Result<()> {
         let client = MonoioHyperClient::builder()
@@ -163,7 +163,7 @@ mod test {
         Ok(())
     }
 
-    #[cfg(feature = "hyper")]
+    #[cfg(any(feature = "hyper", feature = "hyper-patch"))]
     #[monoio::test(driver = "legacy")]
     async fn hyper_non_tls_client() -> anyhow::Result<()> {
         let client = MonoioHyperClient::builder()
