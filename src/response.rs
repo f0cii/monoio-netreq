@@ -1,12 +1,13 @@
-use super::error::Error;
 use bytes::Bytes;
 use http::{Extensions, HeaderMap, HeaderValue, StatusCode, Version};
-#[cfg(feature = "hyper")]
+#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
 use http_body_util::BodyExt as HyperBodyExt;
-#[cfg(feature = "hyper")]
+#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
 use hyper::body::Incoming;
 use monoio_http::common::body::{BodyExt, HttpBody};
 use monoio_http::h1::payload::Payload;
+
+use super::error::Error;
 
 pub type Response<P = Payload> = http::response::Response<P>;
 
@@ -74,7 +75,7 @@ impl HttpResponse<HttpBody> {
     }
 }
 
-#[cfg(feature = "hyper")]
+#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
 impl HttpResponse<Bytes> {
     pub(crate) async fn hyper_new(response: Response<Incoming>) -> Result<Self, Error> {
         let (parts, byte_stream) = response.into_parts();

@@ -1,19 +1,21 @@
-use http::header::{CONNECTION, UPGRADE};
-use http::{HeaderMap, HeaderValue, Request, Uri};
-use hyper::body::Incoming;
-use hyper::client::conn::{http1::Builder as H1Builder, http2::Builder as H2Builder};
-use monoio_transports::connectors::pollio::PollIo;
-use monoio_transports::connectors::{Connector, TcpConnector};
-use monoio_transports::http::hyper::{HyperH1Connector, HyperH2Connector, MonoioExecutor};
-use monoio_transports::pool::ConnectionPool;
 use std::rc::Rc;
 use std::time::Duration;
 
-use super::hyper_body::HyperBody;
-use super::key::TcpAddr as Key;
-use super::Protocol;
+use http::{HeaderMap, HeaderValue, Request, Uri};
+use http::header::{CONNECTION, UPGRADE};
+use hyper::body::Incoming;
+use hyper::client::conn::{http1::Builder as H1Builder, http2::Builder as H2Builder};
+use monoio_transports::connectors::{Connector, TcpConnector};
+use monoio_transports::connectors::pollio::PollIo;
+use monoio_transports::http::hyper::{HyperH1Connector, HyperH2Connector, MonoioExecutor};
+use monoio_transports::pool::ConnectionPool;
+
 use crate::error::Error;
+use crate::hyper::hyper_body::HyperBody;
+use crate::Protocol;
 use crate::request::HttpRequest;
+
+use super::key::TcpAddr as Key;
 
 type HyperHttp1Connector = HyperH1Connector<PollIo<TcpConnector>, Key, HyperBody>;
 type HyperHttp2Connector = HyperH2Connector<PollIo<TcpConnector>, Key, HyperBody>;
@@ -77,7 +79,7 @@ impl HyperClientBuilder {
         self
     }
 
-    /// Sets default headers that will be applied to all requests made through this client.
+    /// Sets default headers that will be applied to all requests made through this http.
     /// These headers can be overridden by request-specific headers.
     pub fn default_headers(mut self, val: HeaderMap) -> Self {
         self.build_config.default_headers = val;
@@ -98,7 +100,7 @@ impl HyperClientBuilder {
         self
     }
 
-    /// Forces the client to use HTTP/1.1 protocol only, disabling HTTP/2 support.
+    /// Forces the http to use HTTP/1.1 protocol only, disabling HTTP/2 support.
     /// Useful when you need to ensure HTTP/1.1 compatibility.
     /// Default protocol is Auto
     pub fn http1_only(mut self) -> Self {
@@ -175,7 +177,6 @@ impl HyperClientBuilder {
             }
 
             Some(h1_connector)
-
         } else {
             None
         };
@@ -196,7 +197,6 @@ impl HyperClientBuilder {
             }
 
             Some(h2_connector)
-
         } else {
             None
         };

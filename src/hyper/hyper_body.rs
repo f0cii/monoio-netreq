@@ -1,9 +1,10 @@
-use bytes::Bytes;
-use hyper::body::{Body as HttpBody, Frame};
-use hyper::Error;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+
+use bytes::Bytes;
+use hyper::body::{Body as HttpBody, Frame};
+use hyper::Error;
 
 use crate::request::RequestBody;
 

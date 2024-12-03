@@ -1,11 +1,11 @@
-use http::header::InvalidHeaderValue;
 use http::Error as HttpError;
+use http::header::InvalidHeaderValue;
 use monoio_http::common::error::HttpError as MonoioHttpError;
-#[cfg(feature = "hyper")]
-use monoio_transports::connectors::pollio::PollConnectError;
-#[cfg(feature = "hyper")]
-use monoio_transports::http::hyper::HyperError;
 use monoio_transports::{FromUriError, TransportError};
+#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+use monoio_transports::connectors::pollio::PollConnectError;
+#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+use monoio_transports::http::hyper::HyperError;
 use serde_json::Error as SerdeError;
 use thiserror::Error as ThisError;
 
@@ -17,18 +17,18 @@ pub enum Error {
     InvalidHeaderValue(InvalidHeaderValue),
     #[error("error building http request: {0:?}")]
     HttpRequestBuilder(HttpError),
-    #[error("http request version and client protocol does not match: {0:?}")]
+    #[error("http request version and http protocol does not match: {0:?}")]
     HttpVersionMismatch(String),
     #[error("error making pool key from uri: {0:?}")]
     UriKeyError(FromUriError),
     #[error("http transport error requesting a connection: {0:?}")]
     HttpTransportError(TransportError),
-    #[cfg(feature = "hyper")]
+    #[cfg(any(feature = "hyper", feature = "hyper-patch"))]
     #[error("hyper transport error requesting a connection: {0:?}")]
     HyperTransportError(HyperError<PollConnectError<std::io::Error>>),
     #[error("{0:?}")]
     HttpResponseError(MonoioHttpError),
-    #[cfg(feature = "hyper")]
+    #[cfg(any(feature = "hyper", feature = "hyper-patch"))]
     #[error("{0:?}")]
     HyperResponseError(hyper::Error),
     #[error("{0:?}")]
@@ -36,5 +36,5 @@ pub enum Error {
     #[error("serde body deserialize error: {0:?}")]
     SerdeDeserializeError(SerdeError),
     #[error("Hyper Connector was not initialized")]
-    ConnectorNotInitialized
+    ConnectorNotInitialized,
 }

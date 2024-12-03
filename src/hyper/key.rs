@@ -1,7 +1,8 @@
+use std::net::ToSocketAddrs;
+
 // Borrowed from TcpTlsAddrs for Non Tls Pool Keys
 use http::Uri;
 use monoio_transports::FromUriError;
-use std::net::ToSocketAddrs;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TcpAddr {

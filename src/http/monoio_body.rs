@@ -1,8 +1,10 @@
-use crate::request::RequestBody;
 use bytes::Bytes;
 use monoio_http::common::body::{FixedBody, HttpBody};
 
+use crate::request::RequestBody;
+
 pub struct MonoioBody;
+
 impl RequestBody for MonoioBody {
     type Body = HttpBody;
 
