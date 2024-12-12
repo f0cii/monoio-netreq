@@ -11,10 +11,12 @@ use crate::hyper::client::MonoioHyperClient;
 #[cfg(any(feature = "hyper", feature = "hyper-patch"))]
 use crate::hyper::hyper_body::HyperBody;
 
-use super::error::Error;
-use super::http::client::MonoioClient;
-use super::http::monoio_body::MonoioBody;
-use super::response::HttpResponse;
+use super::{
+    http::client::MonoioClient,
+    http::monoio_body::MonoioBody,
+    response::HttpResponse,
+    error::Error,
+};
 
 const PROHIBITED_HEADERS: [HeaderName; 5] = [
     CONNECTION,
