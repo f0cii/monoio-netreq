@@ -3,10 +3,10 @@ use std::net::ToSocketAddrs;
 // Borrowed from TcpTlsAddrs
 use http::Uri;
 use service_async::Param;
-use monoio_transports::{
-    connectors::ServerName,
-    http::hyper::ServerName,
-};
+#[cfg(not(feature = "hyper-tls"))]
+use monoio_transports::connectors::ServerName;
+#[cfg(feature = "hyper-tls")]
+use monoio_transports::http::hyper::ServerName;
 use monoio_transports::FromUriError;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -61,11 +61,11 @@ impl TryFrom<&Uri> for PoolKey {
         let port = uri.port_u16().unwrap_or(default_port);
 
         let sn = {
-            #[cfg(any(feature = "native-tls", feature = "native-tls-patch"))]
+            #[cfg(any(feature = "native-tls", feature = "pool-native-tls", feature = "hyper-native-tls"))]
             {
                 host.as_str().into()
             }
-            #[cfg(all(not(feature = "native-tls"), not(feature = "native-tls-patch")))]
+            #[cfg(all(not(feature = "native-tls"), not(feature = "pool-native-tls"), not(feature = "hyper-native-tls")))]
             {
                 ServerName::try_from(host.to_string())?
             }

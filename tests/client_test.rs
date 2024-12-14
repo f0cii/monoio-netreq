@@ -3,12 +3,14 @@ mod test {
     #[allow(unused_imports)]
     use bytes::Bytes;
     use http::{Method, Version};
+    #[cfg(not(feature = "hyper-tls"))]
     use monoio_netreq::http::client::MonoioClient;
-    #[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+    #[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
     use monoio_netreq::hyper::client::MonoioHyperClient;
 
     const BODY: &str = r#"{"data": {"name": "FNS"}}"#;
 
+    #[cfg(not(feature = "hyper-tls"))]
     #[monoio::test(driver = "legacy", timer = true)]
     async fn http1_tls_client() -> anyhow::Result<()> {
         let client = MonoioClient::builder()
@@ -33,6 +35,7 @@ mod test {
         Ok(())
     }
 
+    #[cfg(not(feature = "hyper-tls"))]
     #[monoio::test(driver = "legacy", timer = true)]
     async fn http2_tls_client() -> anyhow::Result<()> {
         let client = MonoioClient::builder()
@@ -52,6 +55,7 @@ mod test {
             .send_body(body.clone())
             .await?;
 
+        #[cfg(not(feature = "hyper-tls"))]
         let res = http_result;
         assert_eq!(res.status(), 200);
         assert_eq!(res.version(), http::Version::HTTP_2);
@@ -59,6 +63,7 @@ mod test {
         Ok(())
     }
 
+    #[cfg(not(feature = "hyper-tls"))]
     #[monoio::test(driver = "legacy", timer = true)]
     // This http sets the Protocol as Auto
     async fn alpn_auto_tls_client() -> anyhow::Result<()> {
@@ -82,6 +87,7 @@ mod test {
         Ok(())
     }
 
+    #[cfg(not(feature = "hyper-tls"))]
     #[monoio::test(driver = "legacy", timer = true)]
     async fn http1_non_tls_client() -> anyhow::Result<()> {
         let client = MonoioClient::builder()
@@ -105,6 +111,7 @@ mod test {
         Ok(())
     }
 
+    #[cfg(not(feature = "hyper-tls"))]
     #[monoio::test(driver = "legacy", timer = true)]
     async fn http2_non_tls_client() -> anyhow::Result<()> {
         let client = MonoioClient::builder()
@@ -129,7 +136,7 @@ mod test {
         Ok(())
     }
 
-    #[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+    #[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
     #[monoio::test(driver = "legacy", timer = true)]
     async fn hyper_http1_non_tls_client() -> anyhow::Result<()> {
         let client = MonoioHyperClient::builder()
@@ -153,7 +160,7 @@ mod test {
         Ok(())
     }
 
-    #[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+    #[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
     #[monoio::test(driver = "legacy", timer = true)]
     async fn hyper_http2_non_tls_client() -> anyhow::Result<()> {
         let client = MonoioHyperClient::builder()
@@ -177,7 +184,7 @@ mod test {
         Ok(())
     }
 
-    #[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+    #[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
     #[monoio::test(driver = "legacy", timer = true)]
     async fn hyper_non_tls_client() -> anyhow::Result<()> {
         let client = MonoioHyperClient::builder()

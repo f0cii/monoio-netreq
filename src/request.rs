@@ -4,19 +4,16 @@ use bytes::Bytes;
 use http::{HeaderName, HeaderValue, Method, Request, Uri, Version};
 use http::header::{CONNECTION, HOST, TE, TRANSFER_ENCODING, UPGRADE};
 use http::request::Builder;
+#[cfg(not(feature = "hyper-tls"))]
 use monoio_http::common::body::HttpBody;
 
-#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+#[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
 use crate::hyper::client::MonoioHyperClient;
-#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+#[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
 use crate::hyper::hyper_body::HyperBody;
-
-use super::{
-    http::client::MonoioClient,
-    http::monoio_body::MonoioBody,
-    response::HttpResponse,
-    error::Error,
-};
+#[cfg(not(feature = "hyper-tls"))]
+use super::http::{client::MonoioClient, monoio_body::MonoioBody};
+use super::{response::HttpResponse, error::Error};
 
 const PROHIBITED_HEADERS: [HeaderName; 5] = [
     CONNECTION,
@@ -154,6 +151,7 @@ impl<C> HttpRequest<C> {
     }
 }
 
+#[cfg(not(feature = "hyper-tls"))]
 impl HttpRequest<MonoioClient> {
     /// Sends the HTTP request without a body.
     /// Returns a Result containing either the HTTP response or an error.
@@ -176,7 +174,7 @@ impl HttpRequest<MonoioClient> {
     }
 }
 
-#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+#[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
 impl HttpRequest<MonoioHyperClient> {
     /// Sends the HTTP request without a body.
     /// Returns a Result containing either the HTTP response or an error.

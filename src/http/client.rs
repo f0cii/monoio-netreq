@@ -174,22 +174,22 @@ impl ClientBuilder {
 
             let tls_connector = TlsConnector::new_with_tls_default(tcp_connector, Some(alpn));
 
-            #[cfg(feature = "transports-patch")]
-                let https_connector = HttpConnectorType::HTTPS(HttpConnector::new_with_pool_options(
+            #[cfg(feature = "pool")]
+            let https_connector = HttpConnectorType::HTTPS(HttpConnector::new_with_pool_options(
                 tls_connector,
                 build_config.max_idle_connections,
                 build_config.idle_timeout_duration,
             ));
-            #[cfg(not(feature = "transports-patch"))]
-                let https_connector = HttpConnectorType::HTTPS(HttpConnector::new(tls_connector));
+            #[cfg(not(feature = "pool"))]
+            let https_connector = HttpConnectorType::HTTPS(HttpConnector::new(tls_connector));
 
             https_connector
         } else {
             // Default TCP Connector without TLS support
-            #[cfg(not(feature = "transports-patch"))]
-                let mut connector = HttpConnector::new(tcp_connector);
-            #[cfg(feature = "transports-patch")]
-                let mut connector = HttpConnector::new_with_pool_options(
+            #[cfg(not(feature = "pool"))]
+            let mut connector = HttpConnector::new(tcp_connector);
+            #[cfg(feature = "pool")]
+            let mut connector = HttpConnector::new_with_pool_options(
                 tcp_connector,
                 build_config.max_idle_connections,
                 build_config.idle_timeout_duration,
