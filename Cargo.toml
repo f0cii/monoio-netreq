@@ -30,15 +30,9 @@ default-features = false
 anyhow = "1.0.92"
 
 [features]
-# There are three main features -> default-crate (enabled by default), pool, hyper-tls
-# use default-crate feature if you want to use the default monoio-transports package
-    # The package is re-exported from crates.io source
-# use the pool if you want to use the git patch source
-    # it allows you to create HttpConnector with your own pool parameters
-# use the hyper-tls feature if you specifically want to use hyper connectors with tls support
-    # Don't mix HttpConnector when you enable this feature
-# The three features are not compatible with each other, build script prevents incompatible combinations
 default = ["default-crate"]
+
+# use default-crate feature if you want to use the default monoio-transports package
 default-crate = ["monoio-transports/default", "monoio-http"]
 native-tls = ["default-crate", "monoio-transports/crate-native-tls"]
 hyper = [
@@ -48,7 +42,8 @@ hyper = [
     "dep:http-body-util"
 ]
 
-pool = ["monoio-transports/monoio-default", "monoio-http"]
+# use the pool features if you want to use the git patch source
+pool = ["monoio-transports/pool", "monoio-http"]
 pool-native-tls = ["pool", "monoio-transports/native-tls"]
 pool-hyper = [
     "pool",
@@ -57,8 +52,9 @@ pool-hyper = [
     "dep:http-body-util"
 ]
 
+# use the hyper-tls feature if you specifically want to use hyper connectors with tls support
 hyper-tls = [
-    "monoio-transports/monoio-legacy",
+    "monoio-transports/hyper-tls",
     "dep:hyper",
     "dep:http-body-util"
 ]
@@ -66,3 +62,24 @@ hyper-native-tls = [
     "hyper-tls",
     "monoio-transports/hyper-native-tls"
 ]
+
+
+[[example]]
+name = "http_with_auto_protocol"
+required-features = ["default-crate"]
+
+[[example]]
+name = "https_with_http1"
+required-features = ["pool"]
+
+[[example]]
+name = "https_with_http2"
+required-features = ["default-crate"]
+
+[[example]]
+name = "https_with_hyper_h1"
+required-features = ["hyper-tls"]
+
+[[example]]
+name = "http_with_hyper_auto_protocol"
+required-features = ["hyper"] # can replace it with pool-hyper also

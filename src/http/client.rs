@@ -84,6 +84,7 @@ impl ClientBuilder {
 
     /// Sets the maximum number of idle connections that can be kept in the connection pool.
     /// Once this limit is reached, older idle connections will be dropped.
+    /// Applicable on feature pool, pool-hyper or pool-native-tls only
     pub fn max_idle_connections(mut self, val: usize) -> Self {
         self.build_config.max_idle_connections = Some(val);
         self
@@ -91,6 +92,7 @@ impl ClientBuilder {
 
     /// Sets the duration after which an idle connection in the pool will be closed.
     /// The timeout is specified in seconds.
+    /// Applicable on feature pool, pool-hyper or pool-native-tls only
     pub fn idle_connection_timeout(mut self, val: u64) -> Self {
         self.build_config.idle_timeout_duration = Some(Duration::from_secs(val));
         self

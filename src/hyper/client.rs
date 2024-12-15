@@ -9,6 +9,8 @@ use monoio_transports::connectors::{Connector, TcpConnector};
 use monoio_transports::connectors::pollio::PollIo;
 use monoio_transports::http::hyper::{HyperH1Connector, HyperH2Connector, MonoioExecutor};
 use monoio_transports::pool::ConnectionPool;
+#[cfg(feature = "hyper-tls")]
+use monoio_transports::http::hyper::HyperTlsConnector;
 
 use crate::{
     hyper::hyper_body::HyperBody,
@@ -18,8 +20,19 @@ use crate::{
     Protocol,
 };
 
-type HyperHttp1Connector = HyperH1Connector<PollIo<TcpConnector>, PoolKey, HyperBody>;
-type HyperHttp2Connector = HyperH2Connector<PollIo<TcpConnector>, PoolKey, HyperBody>;
+enum HyperH1ConnectorType {
+    #[allow(dead_code)]
+    HTTP(HyperH1Connector<PollIo<TcpConnector>, PoolKey, HyperBody>),
+    #[cfg(feature = "hyper-tls")]
+    HTTPS(HyperH1Connector<HyperTlsConnector<TcpConnector>, PoolKey, HyperBody>)
+}
+
+enum HyperH2ConnectorType {
+    #[allow(dead_code)]
+    HTTP(HyperH2Connector<PollIo<TcpConnector>, PoolKey, HyperBody>),
+    #[cfg(feature = "hyper-tls")]
+    HTTPS(HyperH2Connector<HyperTlsConnector<TcpConnector>, PoolKey, HyperBody>)
+}
 
 #[derive(Default, Clone, Debug)]
 struct HyperClientConfig {
@@ -33,8 +46,8 @@ impl HyperClientConfig {
 struct HyperClientInner {
     config: HyperClientConfig,
     protocol: Protocol,
-    h1_connector: Option<HyperHttp1Connector>,
-    h2_connector: Option<HyperHttp2Connector>,
+    h1_connector: Option<HyperH1ConnectorType>,
+    h2_connector: Option<HyperH2ConnectorType>,
 }
 
 pub struct MonoioHyperClient {
@@ -119,6 +132,8 @@ impl HyperClientBuilder {
 
     /// Enables HTTPS/TLS support for secure connections.
     /// Must be called to make HTTPS requests.
+    /// Available only on crate features hyper-tls or hyper-native-tls
+    #[cfg(feature = "hyper-tls")]
     pub fn enable_https(mut self) -> Self {
         self.build_config.enable_https = true;
         self
@@ -172,10 +187,28 @@ impl HyperClientBuilder {
                 ConnectionPool::new_with_idle_interval(idle_timeout, max_idle)
             };
 
-            let mut h1_connector = HyperH1Connector::new_with_pool(PollIo(tcp_connector), connection_pool);
-            if let Some(builder) = build_config.h1_builder {
-                h1_connector = h1_connector.with_hyper_builder(builder);
-            }
+            let h1_connector = if build_config.enable_https {
+                #[cfg(feature = "hyper-tls")]
+                {
+                    let alpn = vec!["http/1.1"];
+                    let tls_connector = HyperTlsConnector::new_with_tls_default(tcp_connector, Some(alpn));
+                    let mut h1 = HyperH1Connector::new_with_pool(tls_connector, connection_pool);
+                    if let Some(builder) = build_config.h1_builder {
+                        h1 = h1.with_hyper_builder(builder);
+                    }
+                    HyperH1ConnectorType::HTTPS(h1)
+                }
+                #[cfg(not(feature = "hyper-tls"))]
+                {
+                    panic!("HTTPS support requires the `hyper-tls` feature enabled.");
+                }
+            } else {
+                let mut h1 = HyperH1Connector::new_with_pool(PollIo(tcp_connector), connection_pool);
+                if let Some(builder) = build_config.h1_builder {
+                    h1 = h1.with_hyper_builder(builder);
+                }
+                HyperH1ConnectorType::HTTP(h1)
+            };
 
             Some(h1_connector)
         } else {
@@ -192,10 +225,28 @@ impl HyperClientBuilder {
                 ConnectionPool::new_with_idle_interval(idle_timeout, max_idle)
             };
 
-            let mut h2_connector = HyperH2Connector::new_with_pool(PollIo(tcp_connector), connection_pool);
-            if let Some(builder) = build_config.h2_builder {
-                h2_connector = h2_connector.with_hyper_builder(builder);
-            }
+            let h2_connector = if build_config.enable_https {
+                #[cfg(feature = "hyper-tls")]
+                {
+                    let alpn = vec!["h2"];
+                    let tls_connector = HyperTlsConnector::new_with_tls_default(tcp_connector, Some(alpn));
+                    let mut h2 = HyperH2Connector::new_with_pool(tls_connector, connection_pool);
+                    if let Some(builder) = build_config.h2_builder {
+                        h2 = h2.with_hyper_builder(builder);
+                    }
+                    HyperH2ConnectorType::HTTPS(h2)
+                }
+                #[cfg(not(feature = "hyper-tls"))]
+                {
+                    panic!("HTTPS support requires the `hyper-tls` feature enabled.");
+                }
+            } else {
+                let mut h2 = HyperH2Connector::new_with_pool(PollIo(tcp_connector), connection_pool);
+                if let Some(builder) = build_config.h2_builder {
+                    h2 = h2.with_hyper_builder(builder);
+                }
+                HyperH2ConnectorType::HTTP(h2)
+            };
 
             Some(h2_connector)
         } else {
@@ -212,6 +263,44 @@ impl HyperClientBuilder {
 
         MonoioHyperClient { inner }
     }
+}
+
+macro_rules! get_connector_connection {
+    ($connector:expr, $key:expr) => {{
+        match $connector {
+            HyperH1ConnectorType::HTTP(connector) => {
+                connector
+                    .connect($key)
+                    .await
+                    .map_err(|e| Error::HyperTransportError(e))
+            },
+            #[cfg(feature = "hyper-tls")]
+            HyperH1ConnectorType::HTTPS(connector) => {
+                connector
+                    .connect($key)
+                    .await
+                    .map_err(|e| Error::HyperTlsError(e))
+            }
+        }
+    }};
+
+    (h2 $connector:expr, $key:expr) => {{
+        match $connector {
+            HyperH2ConnectorType::HTTP(connector) => {
+                connector
+                    .connect($key)
+                    .await
+                    .map_err(|e| Error::HyperTransportError(e))
+            },
+            #[cfg(feature = "hyper-tls")]
+            HyperH2ConnectorType::HTTPS(connector) => {
+                connector
+                    .connect($key)
+                    .await
+                    .map_err(|e| Error::HyperTlsError(e))
+            }
+        }
+    }};
 }
 
 impl MonoioHyperClient {
@@ -233,39 +322,27 @@ impl MonoioHyperClient {
 
         let response = match self.inner.protocol {
             Protocol::Http1 => {
-                let mut conn = self
-                    .inner
-                    .h1_connector
-                    .as_ref()
-                    .unwrap()
-                    .connect(key)
-                    .await
-                    .map_err(|e| Error::HyperTransportError(e))?;
+                let mut conn = get_connector_connection!(
+                    self.inner.h1_connector.as_ref().unwrap(),
+                    key
+                )?;
 
                 conn.send_request(req).await
             }
             Protocol::Http2 => {
-                let mut conn = self
-                    .inner
-                    .h2_connector
-                    .as_ref()
-                    .unwrap()
-                    .connect(key)
-                    .await
-                    .map_err(|e| Error::HyperTransportError(e))?;
+                let mut conn = get_connector_connection!(
+                    h2 self.inner.h2_connector.as_ref().unwrap(),
+                    key
+                )?;
 
                 conn.send_request(req).await
             }
             Protocol::Auto => {
                 // First create Http/1.1 connection with upgrade headers set
-                let mut conn = self
-                    .inner
-                    .h1_connector
-                    .as_ref()
-                    .unwrap()
-                    .connect(key.clone())
-                    .await
-                    .map_err(|e| Error::HyperTransportError(e))?;
+                let mut conn = get_connector_connection!(
+                    self.inner.h1_connector.as_ref().unwrap(),
+                    key.clone()
+                )?;
 
                 let maybe_response = conn
                     .send_request(req.clone())
@@ -282,14 +359,10 @@ impl MonoioHyperClient {
 
                 if should_upgrade_to_h2 {
                     // Switching to H2 connection
-                    let mut conn = self
-                        .inner
-                        .h2_connector
-                        .as_ref()
-                        .unwrap()
-                        .connect(key)
-                        .await
-                        .map_err(|e| Error::HyperTransportError(e))?;
+                    let mut conn = get_connector_connection!(
+                        h2 self.inner.h2_connector.as_ref().unwrap(),
+                        key
+                    )?;
 
                     conn.send_request(req).await
                 } else {
