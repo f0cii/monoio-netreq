@@ -5,18 +5,20 @@ use http::{HeaderMap, Request, Uri};
 use monoio::net::TcpStream;
 use monoio_http::common::body::HttpBody;
 use monoio_transports::connectors::TlsConnector;
-use monoio_transports::connectors::{Connector, TcpConnector, TcpTlsAddr as TlsKey, TlsStream};
+use monoio_transports::connectors::{Connector, TcpConnector, TlsStream};
 use monoio_transports::http::HttpConnector;
 
-use crate::error::{Error, Result};
-use crate::hyper::key::TcpAddr as Key;
-use crate::Protocol;
-use crate::request::HttpRequest;
-use crate::response::Response;
+use crate::{
+    error::{Error, Result},
+    key::PoolKey,
+    Protocol,
+    request::HttpRequest,
+    response::Response,
+};
 
 enum HttpConnectorType {
-    HTTP(HttpConnector<TcpConnector, Key, TcpStream>),
-    HTTPS(HttpConnector<TlsConnector<TcpConnector>, TlsKey, TlsStream<TcpStream>>),
+    HTTP(HttpConnector<TcpConnector, PoolKey, TcpStream>),
+    HTTPS(HttpConnector<TlsConnector<TcpConnector>, PoolKey, TlsStream<TcpStream>>),
 }
 
 #[derive(Default, Clone, Debug)]
@@ -82,6 +84,7 @@ impl ClientBuilder {
 
     /// Sets the maximum number of idle connections that can be kept in the connection pool.
     /// Once this limit is reached, older idle connections will be dropped.
+    /// Applicable on feature pool, pool-hyper or pool-native-tls only
     pub fn max_idle_connections(mut self, val: usize) -> Self {
         self.build_config.max_idle_connections = Some(val);
         self
@@ -89,7 +92,8 @@ impl ClientBuilder {
 
     /// Sets the duration after which an idle connection in the pool will be closed.
     /// The timeout is specified in seconds.
-    pub fn idle_connection_timeout_duration(mut self, val: u64) -> Self {
+    /// Applicable on feature pool, pool-hyper or pool-native-tls only
+    pub fn idle_connection_timeout(mut self, val: u64) -> Self {
         self.build_config.idle_timeout_duration = Some(Duration::from_secs(val));
         self
     }
@@ -172,22 +176,22 @@ impl ClientBuilder {
 
             let tls_connector = TlsConnector::new_with_tls_default(tcp_connector, Some(alpn));
 
-            #[cfg(feature = "transports-patch")]
-                let https_connector = HttpConnectorType::HTTPS(HttpConnector::new_with_pool_options(
+            #[cfg(feature = "pool")]
+            let https_connector = HttpConnectorType::HTTPS(HttpConnector::new_with_pool_options(
                 tls_connector,
                 build_config.max_idle_connections,
                 build_config.idle_timeout_duration,
             ));
-            #[cfg(not(feature = "transports-patch"))]
-                let https_connector = HttpConnectorType::HTTPS(HttpConnector::new(tls_connector));
+            #[cfg(not(feature = "pool"))]
+            let https_connector = HttpConnectorType::HTTPS(HttpConnector::new(tls_connector));
 
             https_connector
         } else {
             // Default TCP Connector without TLS support
-            #[cfg(not(feature = "transports-patch"))]
-                let mut connector = HttpConnector::new(tcp_connector);
-            #[cfg(feature = "transports-patch")]
-                let mut connector = HttpConnector::new_with_pool_options(
+            #[cfg(not(feature = "pool"))]
+            let mut connector = HttpConnector::new(tcp_connector);
+            #[cfg(feature = "pool")]
+            let mut connector = HttpConnector::new_with_pool_options(
                 tcp_connector,
                 build_config.max_idle_connections,
                 build_config.idle_timeout_duration,
@@ -244,9 +248,9 @@ impl MonoioClient {
         uri: Uri,
     ) -> Result<Response<HttpBody>> {
         // The connection pool keys for Non TLS and TLS based connectors slightly differ
+        let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
         let (response, _) = match self.inner.http_connector {
             HttpConnectorType::HTTP(ref connector) => {
-                let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
                 let mut conn = connector
                     .connect(key)
                     .await
@@ -255,7 +259,6 @@ impl MonoioClient {
             }
 
             HttpConnectorType::HTTPS(ref connector) => {
-                let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
                 let mut conn = connector
                     .connect(key)
                     .await

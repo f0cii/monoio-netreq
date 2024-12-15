@@ -8,10 +8,8 @@ edition = "2021"
 doctest = false
 
 [dependencies]
-monoio = "0.2.4"
-monoio-transports = { version = "0.5.3", optional = true }
-monoio-transports-patched = { git = "https://github.com/rEflxzR/monoio-transports.git", branch = "main", optional = true }
-monoio-http = "0.3.11"
+monoio = { version = "0.2.4", default-features = false }
+monoio-http = { version = "0.3.11", optional = true }
 hyper = { version = "1.5.0", optional = true }
 http-body-util = { version = "0.1.2", optional = true }
 http = "1.1.0"
@@ -20,23 +18,68 @@ serde = "1.0.215"
 serde_json = "1.0.132"
 bytes = "1.8.0"
 smol_str = "0.3.2"
+service-async = "0.2.4"
 
+[dependencies.monoio-transports]
+git = "https://github.com/rEflxzR/monoio-transports.git"
+branch = "main"
+optional = true
+default-features = false
 
 [dev-dependencies]
 anyhow = "1.0.92"
 
-
 [features]
 default = ["default-crate"]
-default-crate = ["dep:monoio-transports"]
 
-# Features for native-tls
-native-tls = ["monoio-transports/native-tls"]
-native-tls-patch = ["monoio-transports-patched/native-tls"]
+# use default-crate feature if you want to use the default monoio-transports package
+default-crate = ["monoio-transports/default", "monoio-http"]
+native-tls = ["default-crate", "monoio-transports/crate-native-tls"]
+hyper = [
+    "default-crate",
+    "monoio-transports/crate-hyper",
+    "dep:hyper",
+    "dep:http-body-util"
+]
 
-# Features for hyper
-hyper = ["monoio-transports/hyper", "dep:hyper", "dep:http-body-util"]
-hyper-patch = ["monoio-transports-patched/hyper", "dep:hyper", "dep:http-body-util"]
+# use the pool features if you want to use the git patch source
+pool = ["monoio-transports/pool", "monoio-http"]
+pool-native-tls = ["pool", "monoio-transports/native-tls"]
+pool-hyper = [
+    "pool",
+    "monoio-transports/hyper",
+    "dep:hyper",
+    "dep:http-body-util"
+]
 
-# Patch transport feature
-transports-patch = ["dep:monoio-transports-patched"]
+# use the hyper-tls feature if you specifically want to use hyper connectors with tls support
+hyper-tls = [
+    "monoio-transports/hyper-tls",
+    "dep:hyper",
+    "dep:http-body-util"
+]
+hyper-native-tls = [
+    "hyper-tls",
+    "monoio-transports/hyper-native-tls"
+]
+
+
+[[example]]
+name = "http_with_auto_protocol"
+required-features = ["default-crate"]
+
+[[example]]
+name = "https_with_http1"
+required-features = ["pool"]
+
+[[example]]
+name = "https_with_http2"
+required-features = ["default-crate"]
+
+[[example]]
+name = "https_with_hyper_h1"
+required-features = ["hyper-tls"]
+
+[[example]]
+name = "http_with_hyper_auto_protocol"
+required-features = ["hyper"] # can replace it with pool-hyper also

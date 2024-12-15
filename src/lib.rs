@@ -1,12 +1,11 @@
-// Alias for the patched crate
-#[cfg(feature = "transports-patch")]
-extern crate monoio_transports_patched as monoio_transports;
-
+#[cfg(not(feature = "hyper-tls"))]
 pub mod http;
 mod request;
 mod response;
 mod error;
+#[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
 pub mod hyper;
+mod key;
 
 #[derive(Default, Clone, PartialEq, Debug)]
 enum Protocol {

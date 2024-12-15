@@ -1,14 +1,17 @@
 use bytes::Bytes;
 use http::{Extensions, HeaderMap, HeaderValue, StatusCode, Version};
-#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+#[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
 use http_body_util::BodyExt as HyperBodyExt;
-#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+#[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
 use hyper::body::Incoming;
-use monoio_http::common::body::{BodyExt, HttpBody};
-use monoio_http::h1::payload::Payload;
-
+#[cfg(not(feature = "hyper-tls"))]
+use monoio_http::{
+    common::body::{BodyExt, HttpBody},
+    h1::payload::Payload,
+};
 use super::error::Error;
 
+#[cfg(not(feature = "hyper-tls"))]
 pub type Response<P = Payload> = http::response::Response<P>;
 
 #[derive(Debug)]
@@ -42,6 +45,7 @@ impl<B> HttpResponse<B> {
     }
 }
 
+#[cfg(not(feature = "hyper-tls"))]
 impl HttpResponse<HttpBody> {
     pub(crate) fn new(response: Response<HttpBody>) -> Self {
         let (parts, body) = response.into_parts();
@@ -75,9 +79,9 @@ impl HttpResponse<HttpBody> {
     }
 }
 
-#[cfg(any(feature = "hyper", feature = "hyper-patch"))]
+#[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
 impl HttpResponse<Bytes> {
-    pub(crate) async fn hyper_new(response: Response<Incoming>) -> Result<Self, Error> {
+    pub(crate) async fn hyper_new(response: http::Response<Incoming>) -> Result<Self, Error> {
         let (parts, byte_stream) = response.into_parts();
         let body = byte_stream
             .collect()

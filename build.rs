@@ -1,33 +1,17 @@
 fn main() {
-    let transports_patch = cfg!(feature = "transports-patch");
-    let hyper_patch = cfg!(feature = "hyper-patch");
-    let native_tls_patch = cfg!(feature = "native-tls-patch");
-
     let default_crate = cfg!(feature = "default-crate");
-    let hyper = cfg!(feature = "hyper");
-    let native_tls = cfg!(feature = "native-tls");
+    let pool = cfg!(feature = "pool");
+    let hyper_tls = cfg!(feature = "hyper-tls");
 
-    if hyper && !default_crate {
-        panic!("The 'hyper' feature requires the 'default-crate' flag to be enabled or use default-features");
+    if default_crate && (pool || hyper_tls) {
+        panic!("'default-crate' feature cannot work with 'pool' or 'hyper-tls' feature");
     }
 
-    if native_tls && !default_crate {
-        panic!("The 'native-tls' feature requires the 'default-crate' flag to be enabled or use default-features");
+    if pool && hyper_tls {
+        panic!("'pool' and 'hyper-tls' feature cannot work together");
     }
 
-    if hyper_patch && !transports_patch {
-        panic!("The 'hyper-patch' feature requires the 'transports-patch' feature to be enabled and default-features to be disabled");
-    }
-
-    if native_tls_patch && !transports_patch {
-        panic!("The 'native-tls-patch' feature requires the 'transports-patch' feature to be enabled and default-features to be disabled");
-    }
-
-    if !transports_patch && !default_crate {
-        panic!("atleast one of 'transports-patch'/[default-crate] flag or default-features should be enabled")
-    }
-
-    if transports_patch && default_crate {
-        panic!("disable default-features when using 'transports-patch' feature to avoid any potential issues")
+    if !default_crate && !pool && !hyper_tls {
+        panic!("No features enabled! At least one of default-features, pool-patch or hyper-tls feature is required");
     }
 }
