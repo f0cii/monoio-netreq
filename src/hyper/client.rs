@@ -7,17 +7,19 @@ use hyper::body::Incoming;
 use hyper::client::conn::{http1::Builder as H1Builder, http2::Builder as H2Builder};
 use monoio_transports::connectors::{Connector, TcpConnector};
 use monoio_transports::connectors::pollio::PollIo;
-use monoio_transports::http::hyper::{HyperH1Connector, HyperH2Connector, MonoioExecutor};
+use monoio_transports::http::hyper::{HyperH1Connection, HyperH1Connector, HyperH2Connection, HyperH2Connector, MonoioExecutor};
 use monoio_transports::pool::ConnectionPool;
 #[cfg(feature = "hyper-tls")]
 use monoio_transports::http::hyper::HyperTlsConnector;
 
 use crate::{
     hyper::hyper_body::HyperBody,
-    error::Error,
+    error::{Error, TransportError},
     request::HttpRequest,
     key::PoolKey,
     Protocol,
+    build_connection_pool,
+    get_connection_from_connector
 };
 
 enum HyperH1ConnectorType {
@@ -177,83 +179,28 @@ impl HyperClientBuilder {
             HyperClientConfig::default()
         };
 
+        let protocol = build_config.protocol.clone();
+
         // Build H1 connector with connection pool
         let h1_connector = if protocol_h1 || protocol_auto {
-            let connection_pool = if build_config.pool_disabled {
-                ConnectionPool::new(Some(0))
-            } else {
-                let idle_timeout = build_config.idle_timeout_duration;
-                let max_idle = build_config.max_idle_connections;
-                ConnectionPool::new_with_idle_interval(idle_timeout, max_idle)
-            };
+            let connection_pool = build_connection_pool!(&build_config);
+            let alpn = build_config.enable_https.then(|| vec!["http/1.1"]);
 
-            let h1_connector = if build_config.enable_https {
-                #[cfg(feature = "hyper-tls")]
-                {
-                    let alpn = vec!["http/1.1"];
-                    let tls_connector = HyperTlsConnector::new_with_tls_default(tcp_connector, Some(alpn));
-                    let mut h1 = HyperH1Connector::new_with_pool(tls_connector, connection_pool);
-                    if let Some(builder) = build_config.h1_builder {
-                        h1 = h1.with_hyper_builder(builder);
-                    }
-                    HyperH1ConnectorType::HTTPS(h1)
-                }
-                #[cfg(not(feature = "hyper-tls"))]
-                {
-                    panic!("HTTPS support requires the `hyper-tls` feature enabled.");
-                }
-            } else {
-                let mut h1 = HyperH1Connector::new_with_pool(PollIo(tcp_connector), connection_pool);
-                if let Some(builder) = build_config.h1_builder {
-                    h1 = h1.with_hyper_builder(builder);
-                }
-                HyperH1ConnectorType::HTTP(h1)
-            };
-
-            Some(h1_connector)
+            Self::build_h1_connector(tcp_connector, alpn, connection_pool, build_config.clone())
         } else {
             None
         };
 
         // Build H2 connector with connection pool
         let h2_connector = if protocol_h2 || protocol_auto {
-            let connection_pool = if build_config.pool_disabled {
-                ConnectionPool::new(Some(0))
-            } else {
-                let max_idle = build_config.max_idle_connections;
-                let idle_timeout = build_config.idle_timeout_duration;
-                ConnectionPool::new_with_idle_interval(idle_timeout, max_idle)
-            };
+            let connection_pool = build_connection_pool!(&build_config);
+            let alpn = build_config.enable_https.then(|| vec!["h2"]);
 
-            let h2_connector = if build_config.enable_https {
-                #[cfg(feature = "hyper-tls")]
-                {
-                    let alpn = vec!["h2"];
-                    let tls_connector = HyperTlsConnector::new_with_tls_default(tcp_connector, Some(alpn));
-                    let mut h2 = HyperH2Connector::new_with_pool(tls_connector, connection_pool);
-                    if let Some(builder) = build_config.h2_builder {
-                        h2 = h2.with_hyper_builder(builder);
-                    }
-                    HyperH2ConnectorType::HTTPS(h2)
-                }
-                #[cfg(not(feature = "hyper-tls"))]
-                {
-                    panic!("HTTPS support requires the `hyper-tls` feature enabled.");
-                }
-            } else {
-                let mut h2 = HyperH2Connector::new_with_pool(PollIo(tcp_connector), connection_pool);
-                if let Some(builder) = build_config.h2_builder {
-                    h2 = h2.with_hyper_builder(builder);
-                }
-                HyperH2ConnectorType::HTTP(h2)
-            };
-
-            Some(h2_connector)
+            Self::build_h2_connector(tcp_connector, alpn, connection_pool, build_config)
         } else {
             None
         };
 
-        let protocol = build_config.protocol.clone();
         let inner = Rc::new(HyperClientInner {
             config,
             protocol,
@@ -263,44 +210,66 @@ impl HyperClientBuilder {
 
         MonoioHyperClient { inner }
     }
-}
 
-macro_rules! get_connector_connection {
-    ($connector:expr, $key:expr) => {{
-        match $connector {
-            HyperH1ConnectorType::HTTP(connector) => {
-                connector
-                    .connect($key)
-                    .await
-                    .map_err(|e| Error::HyperTransportError(e))
+    fn build_h1_connector(
+        connector: TcpConnector,
+        alpn: Option<Vec<&str>>,
+        pool: ConnectionPool<PoolKey, HyperH1Connection<HyperBody>>,
+        build_config: HyperClientBuilderConfig
+    ) -> Option<HyperH1ConnectorType> {
+        match alpn {
+            Some(_) => {
+                #[cfg(feature = "hyper-tls")]
+                {
+                    let connector = HyperTlsConnector::new_with_tls_default(connector, alpn);
+                    let mut h1 = HyperH1Connector::new_with_pool(connector, pool);
+                    if let Some(builder) = build_config.h1_builder {
+                        h1 = h1.with_hyper_builder(builder);
+                    }
+                    return Some(HyperH1ConnectorType::HTTPS(h1));
+                }
+                #[cfg(not(feature = "hyper-tls"))]
+                None
             },
-            #[cfg(feature = "hyper-tls")]
-            HyperH1ConnectorType::HTTPS(connector) => {
-                connector
-                    .connect($key)
-                    .await
-                    .map_err(|e| Error::HyperTlsError(e))
+            None => {
+                let mut h1 = HyperH1Connector::new_with_pool(PollIo(connector), pool);
+                if let Some(builder) = build_config.h1_builder {
+                    h1 = h1.with_hyper_builder(builder);
+                }
+                Some(HyperH1ConnectorType::HTTP(h1))
             }
         }
-    }};
+    }
 
-    (h2 $connector:expr, $key:expr) => {{
-        match $connector {
-            HyperH2ConnectorType::HTTP(connector) => {
-                connector
-                    .connect($key)
-                    .await
-                    .map_err(|e| Error::HyperTransportError(e))
+    fn build_h2_connector(
+        connector: TcpConnector,
+        alpn: Option<Vec<&str>>,
+        pool: ConnectionPool<PoolKey, HyperH2Connection<HyperBody>>,
+        build_config: HyperClientBuilderConfig
+    ) -> Option<HyperH2ConnectorType> {
+        match alpn {
+            Some(_) => {
+                #[cfg(feature = "hyper-tls")]
+                {
+                    let connector = HyperTlsConnector::new_with_tls_default(connector, alpn);
+                    let mut h2 = HyperH2Connector::new_with_pool(connector, pool);
+                    if let Some(builder) = build_config.h2_builder {
+                        h2 = h2.with_hyper_builder(builder);
+                    }
+                    return Some(HyperH2ConnectorType::HTTPS(h2));
+                }
+                #[cfg(not(feature = "hyper-tls"))]
+                None
             },
-            #[cfg(feature = "hyper-tls")]
-            HyperH2ConnectorType::HTTPS(connector) => {
-                connector
-                    .connect($key)
-                    .await
-                    .map_err(|e| Error::HyperTlsError(e))
+            None => {
+                let mut h2 = HyperH2Connector::new_with_pool(PollIo(connector), pool);
+                if let Some(builder) = build_config.h2_builder {
+                    h2 = h2.with_hyper_builder(builder);
+                }
+                Some(HyperH2ConnectorType::HTTP(h2))
             }
         }
-    }};
+    }
 }
 
 impl MonoioHyperClient {
@@ -320,9 +289,10 @@ impl MonoioHyperClient {
     ) -> Result<http::Response<Incoming>, Error> {
         let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
 
-        let response = match self.inner.protocol {
+        let response = match self.inner.protocol
+        {
             Protocol::Http1 => {
-                let mut conn = get_connector_connection!(
+                let mut conn = get_connection_from_connector!(
                     self.inner.h1_connector.as_ref().unwrap(),
                     key
                 )?;
@@ -330,7 +300,7 @@ impl MonoioHyperClient {
                 conn.send_request(req).await
             }
             Protocol::Http2 => {
-                let mut conn = get_connector_connection!(
+                let mut conn = get_connection_from_connector!(
                     h2 self.inner.h2_connector.as_ref().unwrap(),
                     key
                 )?;
@@ -339,7 +309,7 @@ impl MonoioHyperClient {
             }
             Protocol::Auto => {
                 // First create Http/1.1 connection with upgrade headers set
-                let mut conn = get_connector_connection!(
+                let mut conn = get_connection_from_connector!(
                     self.inner.h1_connector.as_ref().unwrap(),
                     key.clone()
                 )?;
@@ -359,7 +329,7 @@ impl MonoioHyperClient {
 
                 if should_upgrade_to_h2 {
                     // Switching to H2 connection
-                    let mut conn = get_connector_connection!(
+                    let mut conn = get_connection_from_connector!(
                         h2 self.inner.h2_connector.as_ref().unwrap(),
                         key
                     )?;

@@ -17,24 +17,15 @@ enum Protocol {
 
 impl Protocol {
     pub(crate) fn is_protocol_h1(&self) -> bool {
-        match self {
-            Protocol::Http1 => true,
-            _ => false,
-        }
+        self.eq(&Protocol::Http1)
     }
 
     pub(crate) fn is_protocol_h2(&self) -> bool {
-        match self {
-            Protocol::Http2 => true,
-            _ => false,
-        }
+        self.eq(&Protocol::Http2)
     }
 
     #[allow(dead_code)]
     pub(crate) fn is_protocol_auto(&self) -> bool {
-        match self {
-            Protocol::Auto => true,
-            _ => false,
-        }
+        self.eq(&Protocol::Auto)
     }
 }

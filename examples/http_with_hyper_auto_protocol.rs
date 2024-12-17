@@ -24,5 +24,8 @@ async fn main() -> anyhow::Result<()> {
     // With auto protocol, the connection gets upgraded to http_2 if the server allows
     assert_eq!(res.version(), Version::HTTP_2);
 
+    let string_response = String::from_utf8(res.raw_body().to_vec()).unwrap();
+    println!("Result: {}", string_response);
+
     Ok(())
 }
