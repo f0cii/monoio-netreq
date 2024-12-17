@@ -1,6 +1,6 @@
 use http::Error as HttpError;
 use http::header::InvalidHeaderValue;
-use monoio_transports::{FromUriError, TransportError};
+use monoio_transports::{FromUriError, TransportError as MonoioTransportError};
 #[cfg(not(feature = "hyper-tls"))]
 use monoio_http::common::error::HttpError as MonoioHttpError;
 #[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
@@ -11,7 +11,7 @@ use monoio_transports::{
 #[cfg(feature = "hyper-tls")]
 use monoio_transports::http::hyper::TlsError;
 use serde_json::Error as SerdeError;
-use thiserror::Error as ThisError;
+use thiserror::{Error as ThisError, Error};
 
 #[cfg(not(feature = "hyper-tls"))]
 pub type Result<T> = std::result::Result<T, Error>;
@@ -26,14 +26,8 @@ pub enum Error {
     HttpVersionMismatch(String),
     #[error("error making pool key from uri: {0:?}")]
     UriKeyError(FromUriError),
-    #[error("http transport error requesting a connection: {0:?}")]
-    HttpTransportError(TransportError),
-    #[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
-    #[error("hyper transport error requesting a connection: {0:?}")]
-    HyperTransportError(HyperError<PollConnectError<std::io::Error>>),
-    #[cfg(feature = "hyper-tls")]
-    #[error("hyper Tls stream error: {0:?}")]
-    HyperTlsError(HyperError<TlsError>),
+    #[error("{0:?}")]
+    TransportError(TransportError),
     #[cfg(not(feature = "hyper-tls"))]
     #[error("{0:?}")]
     HttpResponseError(MonoioHttpError),
@@ -46,4 +40,22 @@ pub enum Error {
     SerdeDeserializeError(SerdeError),
     #[error("Hyper Connector was not initialized")]
     ConnectorNotInitialized,
+}
+
+#[derive(Debug, Error)]
+pub enum TransportError {
+    #[error("http connector error: {0:?}")]
+    HttpConnectorError(MonoioTransportError),
+    #[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
+    #[error("hyper poll error: {0:?}")]
+    HyperPollError(HyperError<PollConnectError<std::io::Error>>),
+    #[cfg(feature = "hyper-tls")]
+    #[error("Hyper TLS stream error: {0:?}")]
+    TlsStreamError(HyperError<TlsError>),
+}
+
+impl From<TransportError> for Error {
+    fn from(err: TransportError) -> Self {
+        Error::TransportError(err)
+    }
 }

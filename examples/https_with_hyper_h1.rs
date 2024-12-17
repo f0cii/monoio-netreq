@@ -24,5 +24,8 @@ async fn main() -> anyhow::Result<()> {
     // Https connections are negotiated via alpn, hence there won't be any upgrade here
     // Connections only get upgraded when using http only
 
+    let string_response = String::from_utf8(res.raw_body().to_vec()).unwrap();
+    println!("Result: {}", string_response);
+
     Ok(())
 }

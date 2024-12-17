@@ -9,11 +9,12 @@ use monoio_transports::connectors::{Connector, TcpConnector, TlsStream};
 use monoio_transports::http::HttpConnector;
 
 use crate::{
-    error::{Error, Result},
+    error::{Error, Result, TransportError},
     key::PoolKey,
     Protocol,
     request::HttpRequest,
     response::Response,
+    apply_parameter_from_config,
 };
 
 enum HttpConnectorType {
@@ -143,22 +144,6 @@ impl ClientBuilder {
     }
 }
 
-macro_rules! apply_parameter_from_config {
-    ($connector:expr, $method:ident($val:expr)) => {
-        match $connector {
-            HttpConnectorType::HTTP(ref mut c) => c.$method($val),
-            HttpConnectorType::HTTPS(ref mut c) => c.$method($val),
-        }
-    };
-
-    ($connector:expr, $builder:ident().$method:ident($val:expr)) => {
-        match $connector {
-            HttpConnectorType::HTTP(ref mut c) => c.$builder().$method($val),
-            HttpConnectorType::HTTPS(ref mut c) => c.$builder().$method($val),
-        }
-    };
-}
-
 impl ClientBuilder {
     pub fn build(self) -> MonoioClient {
         let build_config = self.build_config.clone();
@@ -247,14 +232,15 @@ impl MonoioClient {
         req: Request<HttpBody>,
         uri: Uri,
     ) -> Result<Response<HttpBody>> {
-        // The connection pool keys for Non TLS and TLS based connectors slightly differ
         let key = uri.try_into().map_err(|e| Error::UriKeyError(e))?;
-        let (response, _) = match self.inner.http_connector {
+
+        let (response, _) = match self.inner.http_connector
+        {
             HttpConnectorType::HTTP(ref connector) => {
                 let mut conn = connector
                     .connect(key)
                     .await
-                    .map_err(|e| Error::HttpTransportError(e))?;
+                    .map_err(|e| TransportError::HttpConnectorError(e))?;
                 conn.send_request(req).await
             }
 
@@ -262,7 +248,7 @@ impl MonoioClient {
                 let mut conn = connector
                     .connect(key)
                     .await
-                    .map_err(|e| Error::HttpTransportError(e))?;
+                    .map_err(|e| TransportError::HttpConnectorError(e))?;
                 conn.send_request(req).await
             }
         };

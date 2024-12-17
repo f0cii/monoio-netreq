@@ -22,5 +22,8 @@ async fn main() -> anyhow::Result<()> {
     assert_eq!(res.status(), 200);
     assert_eq!(res.version(), Version::HTTP_11);
 
+    let string_response = String::from_utf8(res.bytes().await.unwrap().to_vec()).unwrap();
+    println!("Result: {}", string_response);
+
     Ok(())
 }
