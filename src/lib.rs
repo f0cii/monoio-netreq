@@ -1,11 +1,11 @@
 #[cfg(not(feature = "hyper-tls"))]
 pub mod http;
-mod request;
-mod response;
-mod error;
+pub mod request;
+pub mod response;
+pub mod error;
 #[cfg(any(feature = "hyper", feature = "pool-hyper", feature = "hyper-tls"))]
 pub mod hyper;
-mod key;
+pub mod key;
 
 #[derive(Default, Clone, PartialEq, Debug)]
 enum Protocol {
